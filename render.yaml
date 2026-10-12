@@ -1,0 +1,29 @@
+# Render Blueprint：單一 Web Service（Node 伺服器同時提供前端靜態檔、Socket.IO 與 API）
+services:
+  - type: web
+    name: null-protocol
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: SYNC_WINDOW_MS
+        value: "3000"
+      - key: HINT_COOLDOWN_MS
+        value: "15000"
+      # 開發者工具（顯示正解）：正式環境明確關閉
+      - key: DEBUG_TOOLS
+        value: "0"
+      # TURN 憑證請在 Render 後台手動填入（sync: false 代表不寫進版本庫）
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false

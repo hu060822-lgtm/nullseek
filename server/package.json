@@ -1,0 +1,26 @@
+{
+  "name": "@null-protocol/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs --sourcemap",
+    "start": "node dist/index.cjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@null-protocol/shared": "*",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "socket.io-client": "^4.8.1",
+    "tsx": "^4.19.0",
+    "vitest": "^5.0.3"
+  }
+}

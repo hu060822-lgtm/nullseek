@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { on } from '../game/bus';
-import { ROLE_INFO } from '@null-protocol/shared';
+import { ROLES, ROLE_INFO } from '@null-protocol/shared';
 import { audio } from '../audio/engine';
 import { bindInput, requestLock, startGameLoop } from '../game/loop';
 import { useStore } from '../state/store';
 import { voice } from '../voice/voice';
+import { preloadCrew } from '../game/characters/assets';
 import BlindView from './BlindView';
 import DebugPanel from './DebugPanel';
 import Briefing from './Briefing';
@@ -49,6 +50,7 @@ export default function GameScreen(): JSX.Element | null {
   const briefed = useStore((s) => s.briefed);
   const panel = useStore((s) => s.panel);
   const volume = useStore((s) => s.prefs.volume);
+  const prefs = useStore((s) => s.prefs);
   const debug = useStore((s) => s.debug && s.debugOpen);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -67,9 +69,23 @@ export default function GameScreen(): JSX.Element | null {
     audio.setVolume(volume);
   }, [volume]);
 
+  // 各類聲音的音量與單聲道模式（音訊還沒啟動時引擎會先記住，啟動後套用）
+  useEffect(() => {
+    audio.setBusVolume('env', prefs.envVolume);
+    audio.setBusVolume('echo', prefs.echoVolume);
+    audio.setBusVolume('nav', prefs.navVolume);
+    audio.setBusVolume('voice', prefs.voiceVolume);
+    audio.setMono(prefs.mono);
+  }, [prefs.envVolume, prefs.echoVolume, prefs.navVolume, prefs.voiceVolume, prefs.mono]);
+
   useEffect(() => {
     if (panel && document.pointerLockElement) document.exitPointerLock();
   }, [panel]);
+
+  // 看得見的角色預先下載隊友的角色模型（盲區員不載入任何 3D 資產）
+  useEffect(() => {
+    if (role && ROLE_INFO[role].canSee) preloadCrew(ROLES.filter((r) => r !== role));
+  }, [role]);
 
   if (!role) return null;
   const canSee = ROLE_INFO[role].canSee;

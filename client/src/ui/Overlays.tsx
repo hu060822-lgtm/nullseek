@@ -226,6 +226,51 @@ export function SignalOverlay(): JSX.Element | null {
 
 /* ------------------------------ 說明／提示／設定 ------------------------------ */
 
+function VolumeSlider({ label, k, max = 1 }: { label: string; k: 'volume' | 'envVolume' | 'echoVolume' | 'navVolume' | 'voiceVolume'; max?: number }): JSX.Element {
+  const v = useStore((s) => s.prefs[k]);
+  return (
+    <label className="slider">
+      {label}
+      <input type="range" min={0} max={max} step={0.05} value={v} onChange={(e) => {
+        const n = Number(e.target.value);
+        useStore.getState().setPrefs({ [k]: n });
+        if (k === 'volume') audio.setVolume(n);
+      }} />
+      <span>{Math.round(v * 100)}</span>
+    </label>
+  );
+}
+
+/** 音訊設定與校準（聽得見的角色）。回聲、方向提示與隊友語音的音量分開調整 */
+function AudioSettings({ blind }: { blind: boolean }): JSX.Element {
+  const prefs = useStore((s) => s.prefs);
+  return (
+    <>
+      <VolumeSlider label="總音量" k="volume" />
+      <VolumeSlider label="環境音與地標" k="envVolume" max={1.5} />
+      {blind && <VolumeSlider label="回聲" k="echoVolume" max={1.5} />}
+      {blind && <VolumeSlider label="方向提示與設備指引" k="navVolume" max={1.5} />}
+      <VolumeSlider label="隊友語音" k="voiceVolume" max={1.5} />
+      <div className="row sm calibrate">
+        <span>音訊校準：</span>
+        <button className="btn small" onClick={() => void audio.init().then(() => audio.testChannel('left'))}>左聲道</button>
+        <button className="btn small" onClick={() => void audio.init().then(() => audio.testChannel('right'))}>右聲道</button>
+        <button className="btn small" onClick={() => void audio.init().then(() => audio.testChannel('both'))}>兩邊（音量）</button>
+      </div>
+      <label className="row sm">
+        <input type="checkbox" checked={prefs.mono} onChange={(e) => useStore.getState().setPrefs({ mono: e.target.checked })} />
+        單聲道模式（只有一個喇叭、或左右聲道聽起來一樣時使用{blind ? '；回聲會另外用語音報出四個方向的距離' : ''}）
+      </label>
+      {blind && (
+        <label className="row sm">
+          <input type="checkbox" checked={prefs.beacon} onChange={(e) => useStore.getState().setPrefs({ beacon: e.target.checked })} />
+          設備指引音（靠近自己能操作的設備時發出的「滴」聲）
+        </label>
+      )}
+    </>
+  );
+}
+
 export function HelpOverlay(): JSX.Element | null {
   const me = useStore((s) => s.me);
   const world = useStore((s) => s.world);
@@ -268,9 +313,10 @@ export function HelpOverlay(): JSX.Element | null {
 
       <div className="blk-heading">操作</div>
       <div className="note">
-        <kbd>WASD</kbd> 移動、<kbd>Shift</kbd> 跑、滑鼠轉向、<kbd>E</kbd> 操作設備、<kbd>Q</kbd> 信號器、<kbd>Tab</kbd> 線索、<kbd>H</kbd> 本頁
+        <kbd>WASD</kbd> 移動、<kbd>Shift</kbd> 跑、<kbd>C</kbd> 蹲下／站起、滑鼠轉向、<kbd>E</kbd> 操作設備、<kbd>Q</kbd> 信號器、<kbd>Tab</kbd> 線索、<kbd>H</kbd> 本頁
         {info.canSpeak && <>、<kbd>M</kbd> 麥克風靜音</>}
-        {!info.canSee && <>、<kbd>F</kbd> 回聲定位、<kbd>P</kbd> 重聽機械聲</>}
+        {!info.canSee && <>、<kbd>F</kbd> 回聲定位、<kbd>V</kbd> 報出朝向、<kbd>P</kbd> 重聽機械聲</>}
+        {info.canHear && <>、<kbd>K</kbd> 音訊校準</>}
         {role === 'MUTE' && <>、<kbd>G</kbd> 標記注視中的設備（隊友會看到標記、聽到方位）</>}。
         門洞（無窗迷宮、循環走廊）只要走進去就會觸發。
       </div>
@@ -279,22 +325,18 @@ export function HelpOverlay(): JSX.Element | null {
       <MicSetup role={role} />
 
       <div className="blk-heading">設定</div>
-      {info.canHear && (
-        <label className="slider">
-          音量
-          <input type="range" min={0} max={1} step={0.05} value={prefs.volume} onChange={(e) => {
-            const v = Number(e.target.value);
-            useStore.getState().setPrefs({ volume: v });
-            audio.setVolume(v);
-          }} />
-          <span>{Math.round(prefs.volume * 100)}</span>
-        </label>
-      )}
+      {info.canHear && <AudioSettings blind={!info.canSee} />}
       <label className="slider">
         滑鼠靈敏度
         <input type="range" min={0.3} max={2.5} step={0.05} value={prefs.sensitivity} onChange={(e) => useStore.getState().setPrefs({ sensitivity: Number(e.target.value) })} />
         <span>{prefs.sensitivity.toFixed(2)}</span>
       </label>
+      {info.canSee && (
+        <label className="row sm">
+          <input type="checkbox" checked={prefs.retro} onChange={(e) => useStore.getState().setPrefs({ retro: e.target.checked })} />
+          復古低解析度畫面（PS1 風格；遠處的銘牌文字會比較難讀）
+        </label>
+      )}
       {!info.canSee && (
         <label className="row sm">
           <input type="checkbox" checked={prefs.speech} onChange={(e) => {

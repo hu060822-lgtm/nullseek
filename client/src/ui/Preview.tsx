@@ -68,9 +68,10 @@ export default function Preview({ mode, role }: { mode: string; role: Role }): J
       complete: mode === 'ending',
     });
     const mz = r.minZ + 4.5;
-    remotes.BLIND = { x: -2, z: mz, yaw: 0.6, tx: -2, tz: mz, tyaw: 0.6, movedAt: 0, stride: 0, seen: true };
-    remotes.DEAF = { x: 1.5, z: mz + 1.2, yaw: 2.6, tx: 1.5, tz: mz + 1.2, tyaw: 2.6, movedAt: 0, stride: 0, seen: true };
-    remotes.MUTE = { x: 2.6, z: mz - 0.6, yaw: -2.4, tx: 2.6, tz: mz - 0.6, tyaw: -2.4, movedAt: 0, stride: 0, seen: true };
+    const still = (x: number, z: number, yaw: number) => ({ x, z, yaw, tx: x, tz: z, tyaw: yaw, movedAt: 0, stride: 0, seen: true, speed: 0, turnRate: 0, at: performance.now(), crouch: false, act: null, hurt: 0 });
+    remotes.BLIND = still(-2, mz, 0.6);
+    remotes.DEAF = still(1.5, mz + 1.2, 2.6);
+    remotes.MUTE = still(2.6, mz - 0.6, -2.4);
   }, [mode, role]);
   return (
     <div className="game">

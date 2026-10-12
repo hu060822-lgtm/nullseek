@@ -29,6 +29,8 @@ export interface ChapterHooks {
   refreshDevices(): void;
   chapterComplete(): void;
   isConnected(role: Role): boolean;
+  /** 答錯被鎖定（角色動畫：觸電反應） */
+  penalized?(role: Role): void;
   /** 把目前位於 zone 內的玩家傳送到指定位置（迷宮、循環走廊換場用） */
   teleport(zone: ZoneId, spots: Record<Role, { x: number; z: number; yaw: number }>): void;
 }

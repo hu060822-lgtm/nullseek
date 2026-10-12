@@ -28,7 +28,10 @@ import {
  * 盲區員沒有 3D 場景，但同樣使用這份移動／碰撞邏輯；伺服器用同一份碰撞資料再驗證一次。
  */
 
-export const RUN_SPEED = 5.0;
+export const RUN_SPEED = 4.4;
+/** 蹲下時的移動速度倍率 */
+export const CROUCH_SPEED = 0.45;
+export const CROUCH_EYE = 1.08;
 
 export const pose = { x: 0, y: EYE_HEIGHT, z: 0, yaw: 0, pitch: 0 };
 
@@ -52,6 +55,11 @@ export function setDoors(doors: DoorState): void {
   colliders = buildColliders(doors);
 }
 
+/** 測試關卡用：直接指定碰撞盒（正式遊戲一律由門的狀態產生） */
+export function setColliders(boxes: Box[]): void {
+  colliders = boxes;
+}
+
 export function getColliders(): readonly Box[] {
   return colliders;
 }
@@ -61,6 +69,7 @@ export function spawnFor(role: Role): void {
   pose.x = s.pos[0];
   pose.z = s.pos[2];
   pose.y = EYE_HEIGHT;
+  body.crouch = false;
   pose.yaw = s.yaw;
   pose.pitch = 0;
   lastSent = { x: NaN, z: NaN, yaw: NaN };
@@ -69,7 +78,6 @@ export function spawnFor(role: Role): void {
 export function snapTo(p: PlayerPose): void {
   pose.x = p.x;
   pose.z = p.z;
-  pose.y = EYE_HEIGHT;
 }
 
 export function setYaw(yaw: number): void {
@@ -123,8 +131,18 @@ export function look(dx: number, dy: number, sensitivity: number): void {
   pose.pitch = Math.max(-1.25, Math.min(1.25, pose.pitch - dy * k));
 }
 
+/** 自己的身體姿態（蹲下只影響視角高度與速度；隊友看到的是同步過去的動畫） */
+export const body = { crouch: false };
+
+export function setCrouch(on: boolean): void {
+  body.crouch = on;
+}
+
 export function step(dt: number, enabled: boolean): StepResult {
   const none: StepResult = { moved: false, blocked: false, speed: 0, footstep: false, running: false };
+  // 視角高度平滑地跟著蹲下／站起
+  const eye = body.crouch ? CROUCH_EYE : EYE_HEIGHT;
+  pose.y += (eye - pose.y) * (1 - Math.exp(-Math.min(dt, 0.1) * 9));
   if (!enabled) return none;
   const f = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
   const r = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
@@ -139,8 +157,8 @@ export function step(dt: number, enabled: boolean): StepResult {
   dx /= len;
   dz /= len;
 
-  const running = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  const speed = running ? RUN_SPEED : WALK_SPEED;
+  const running = !body.crouch && (keys.has('ShiftLeft') || keys.has('ShiftRight'));
+  const speed = body.crouch ? WALK_SPEED * CROUCH_SPEED : running ? RUN_SPEED : WALK_SPEED;
   const dist = Math.min(dt, 0.1) * speed;
   const res = moveWithCollision(pose.x, pose.z, pose.x + dx * dist, pose.z + dz * dist, colliders, PLAYER_RADIUS);
   const actual = Math.hypot(res.x - pose.x, res.z - pose.z);
@@ -149,7 +167,7 @@ export function step(dt: number, enabled: boolean): StepResult {
 
   stride += actual;
   let footstep = false;
-  const strideLen = running ? 1.35 : 1.0;
+  const strideLen = running ? 1.35 : body.crouch ? 0.7 : 1.0;
   if (stride >= strideLen) {
     stride = 0;
     footstep = true;

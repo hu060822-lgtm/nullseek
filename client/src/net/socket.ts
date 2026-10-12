@@ -23,6 +23,7 @@ import { portalCooldown, setDoors, setYaw, snapTo, spawnFor } from '../game/cont
 import { playDoor } from '../game/doorSounds';
 import { emit } from '../game/bus';
 import { puzzleOf } from '../game/codes';
+import { applyEchoJam } from '../game/blind/pending';
 import { nextId, useStore } from '../state/store';
 import { voice } from '../voice/voice';
 import { clearSession, loadSession, saveSession } from './session';
@@ -51,12 +52,13 @@ export function applyRoleSenses(role: Role | null): void {
 function applySync(sync: FullSync): void {
   const st = useStore.getState();
   const prevRole = st.me?.role ?? null;
-  st.set({ room: sync.room, world: sync.world, me: sync.me, log: sync.log, clues: sync.clues ?? {}, debug: !!sync.debug });
+  st.set({ room: sync.room, world: sync.world, me: sync.me, log: sync.log, clues: sync.clues ?? {}, debug: !!sync.debug, risks: sync.risks ?? [] });
   if (sync.world) setDoors(sync.world.doors);
   if (sync.me.role !== prevRole || !prevRole) applyRoleSenses(sync.me.role);
   if (sync.pos) snapTo(sync.pos);
   else if (sync.me.role && sync.room.phase !== 'LOBBY') spawnFor(sync.me.role);
   if (sync.world?.chapterComplete) st.set({ complete: true });
+  if (sync.echoJamMs) applyEchoJam(sync.echoJamMs);
 }
 
 function enterSession(r: { roomCode: string; token: string; playerId: string; sync: FullSync }): void {
@@ -96,6 +98,7 @@ function tryRejoin(): void {
 
 export function initNetwork(): void {
   socket.on('connect', () => {
+    resetStance();
     useStore.getState().set({ connected: true, connecting: false });
     if (hadSession || loadSession()) tryRejoin();
   });
@@ -120,6 +123,7 @@ export function initNetwork(): void {
     if (st.room?.phase === 'LOBBY' && room.phase === 'PLAYING' && role) {
       clearRemotes();
       spawnFor(role);
+      resetStance();
     }
     if (room.phase === 'LOBBY') {
       stopSpeech();
@@ -203,6 +207,10 @@ export function initNetwork(): void {
       if (taps.length) speak(`${ROLE_INFO[s.from].name}發來訊號`);
     }
   });
+
+  // 回聲風險區：狀態給介面（燈號）與盲區員的預警聲；被偵測時通知遊戲迴圈（警報＋干擾）
+  socket.on('risk:state', (risks) => useStore.getState().set({ risks }));
+  socket.on('risk:tripped', (p) => emit('riskTripped', p));
 
   socket.on('notice', (n) => {
     useStore.getState().pushNotice(n);
@@ -424,6 +432,7 @@ export async function doAction(deviceId: string, action: string, values: Record<
   if (r.tone === 'ok') audio.uiOk();
   else if (r.tone === 'warn') audio.uiWarn();
   else if (r.tone === 'error') (r.lockMs ? audio.lockout() : audio.uiError());
+  if (r.lockMs) emit('fx', { visual: 'shake' });
   speak(r.message, { interrupt: true });
   return r;
 }
@@ -480,4 +489,21 @@ function speakPanel(view: PanelView): void {
 
 export function sendMove(m: { x: number; y: number; z: number; yaw: number; seq: number }): void {
   if (socket.connected) socket.volatile.emit('player:move', m);
+}
+
+/** 身體姿態（蹲下、面板是否開著）：只影響隊友看到的動畫 */
+let lastStance = '';
+/** 回聲脈衝（只給伺服器判定風險區；沒有參數、沒有回覆） */
+export function sendEchoPulse(): void {
+  if (socket.connected) socket.emit('echo:pulse');
+}
+
+export function sendStance(crouch: boolean, panel: boolean): void {
+  const key = `${crouch}|${panel}`;
+  if (key === lastStance || !socket.connected) return;
+  lastStance = key;
+  socket.emit('player:stance', { crouch, panel });
+}
+export function resetStance(): void {
+  lastStance = '';
 }

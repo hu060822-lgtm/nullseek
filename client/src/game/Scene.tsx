@@ -18,9 +18,11 @@ import {
   type LineSegments,
   type Mesh,
   type PointLight,
+  type SpotLight,
   type Texture,
 } from 'three';
 import {
+  CHAPTER1_ACOUSTICS,
   DEVICES,
   DEVICE_BY_ID,
   DOOR_BOX_BY_ID,
@@ -50,7 +52,7 @@ import { useStore, type Marker } from '../state/store';
 import { on } from './bus';
 import { deviceCode, roomCode } from './codes';
 import { currentTarget, pose } from './controller';
-import { remotes } from './remote';
+import { CrewAvatar } from './characters/CrewAvatar';
 import {
   C,
   ceilingTile,
@@ -89,16 +91,17 @@ const VIEW_ROOMS = 3; // 只渲染目前房間前後各 3 間（更遠的被霧�
 
 /* ------------------------------- 共用材質 ------------------------------- */
 
+// PS1 方向：平面著色、粗糙、幾乎沒有金屬反光（避免塑膠或展示品般的高光）
 const M = {
-  enamel: new MeshStandardMaterial({ color: C.bone, roughness: 0.42, metalness: 0.05 }),
-  enamel2: new MeshStandardMaterial({ color: '#D3CFC4', roughness: 0.5, metalness: 0.05 }),
-  powder: new MeshStandardMaterial({ color: C.fog, roughness: 0.72, metalness: 0.15 }),
-  ink: new MeshStandardMaterial({ color: C.ink, roughness: 0.85, metalness: 0.1 }),
-  brass: new MeshStandardMaterial({ color: C.brass, roughness: 0.32, metalness: 0.85 }),
-  steel: new MeshStandardMaterial({ color: '#8F928E', roughness: 0.38, metalness: 0.8 }),
-  glassOff: new MeshStandardMaterial({ color: '#4A4D4E', roughness: 0.15, metalness: 0.2 }),
-  frosted: new MeshStandardMaterial({ color: '#C9C6BD', roughness: 0.9, metalness: 0, transparent: true, opacity: 0.92 }),
-  void: new MeshBasicMaterial({ color: '#1B1D1E' }),
+  enamel: new MeshStandardMaterial({ color: '#A3A8A1', roughness: 0.85, metalness: 0, flatShading: true }),
+  enamel2: new MeshStandardMaterial({ color: '#868C86', roughness: 0.9, metalness: 0, flatShading: true }),
+  powder: new MeshStandardMaterial({ color: C.fog, roughness: 0.9, metalness: 0.05, flatShading: true }),
+  ink: new MeshStandardMaterial({ color: C.ink, roughness: 0.95, metalness: 0, flatShading: true }),
+  brass: new MeshStandardMaterial({ color: C.brass, roughness: 0.6, metalness: 0.35, flatShading: true }),
+  steel: new MeshStandardMaterial({ color: '#6A7170', roughness: 0.65, metalness: 0.3, flatShading: true }),
+  glassOff: new MeshStandardMaterial({ color: '#262B2D', roughness: 0.35, metalness: 0.1, flatShading: true }),
+  frosted: new MeshStandardMaterial({ color: '#7F8781', roughness: 0.95, metalness: 0, transparent: true, opacity: 0.92, flatShading: true }),
+  void: new MeshBasicMaterial({ color: '#0B0E0F' }),
 };
 const lineInk = new LineBasicMaterial({ color: C.ink });
 const lineRed = new LineBasicMaterial({ color: C.red });
@@ -115,14 +118,14 @@ function useRepeat(tex: Texture, rx: number, ry: number): Texture {
 type V3 = [number, number, number];
 function B({ p, s, m, r }: { p: V3; s: V3; m: MeshStandardMaterial | MeshBasicMaterial; r?: V3 }): JSX.Element {
   return (
-    <mesh position={p} rotation={r} material={m}>
+    <mesh position={p} rotation={r} material={m} castShadow receiveShadow>
       <boxGeometry args={s} />
     </mesh>
   );
 }
-function Cyl({ p, r, h, m, rot, seg = 16 }: { p: V3; r: number; h: number; m: MeshStandardMaterial; rot?: V3; seg?: number }): JSX.Element {
+function Cyl({ p, r, h, m, rot, seg = 10 }: { p: V3; r: number; h: number; m: MeshStandardMaterial; rot?: V3; seg?: number }): JSX.Element {
   return (
-    <mesh position={p} rotation={rot} material={m}>
+    <mesh position={p} rotation={rot} material={m} castShadow receiveShadow>
       <cylinderGeometry args={[r, r, h, seg]} />
     </mesh>
   );
@@ -174,9 +177,9 @@ function ZoneShell({ z }: { z: ZoneDef }): JSX.Element {
   ];
   return (
     <group>
-      <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[w + 0.4, d + 0.4]} />
-        <meshStandardMaterial map={floor} roughness={0.8} metalness={0.05} />
+        <meshStandardMaterial map={floor} roughness={0.92} metalness={0} />
       </mesh>
       <mesh position={[cx, WALL_HEIGHT, cz]} rotation={[Math.PI / 2, 0, 0]}>
         <planeGeometry args={[w + 0.4, d + 0.4]} />
@@ -202,9 +205,9 @@ function WallMesh({ box }: { box: Box }): JSX.Element {
   const cz = (box.minZ + box.maxZ) / 2;
   return (
     <group>
-      <mesh position={[cx, WALL_HEIGHT / 2, cz]}>
+      <mesh position={[cx, WALL_HEIGHT / 2, cz]} castShadow receiveShadow>
         <boxGeometry args={[w, WALL_HEIGHT, d]} />
-        <meshStandardMaterial map={tex} roughness={0.55} metalness={0.05} />
+        <meshStandardMaterial map={tex} roughness={0.9} metalness={0} />
       </mesh>
       <B p={[cx, 0.06, cz]} s={[w + 0.04, 0.12, d + 0.04]} m={M.ink} />
     </group>
@@ -220,7 +223,7 @@ function Fixtures({ z }: { z: ZoneDef }): JSX.Element {
   const lit = useRef<InstancedMesh>(null);
   const housing = useRef<InstancedMesh>(null);
   const power = useStore((s) => roomPower(z.index, s.world));
-  const mat = useMemo(() => new MeshBasicMaterial({ color: '#F6F4EE' }), []);
+  const mat = useMemo(() => new MeshBasicMaterial({ color: '#D3DDE0' }), []);
   const spots = useMemo(() => {
     const out: Array<{ x: number; z: number; rot: number }> = [];
     const w = z.maxX - z.minX;
@@ -255,7 +258,7 @@ function Fixtures({ z }: { z: ZoneDef }): JSX.Element {
   }, [spots]);
 
   useEffect(() => {
-    mat.color.set(new Color('#3A3D3F').lerp(new Color('#F6F4EE'), Math.min(1, power)));
+    mat.color.set(new Color('#22282A').lerp(new Color('#D3DDE0'), Math.min(1, power)));
   }, [power, mat]);
 
   return (
@@ -266,33 +269,62 @@ function Fixtures({ z }: { z: ZoneDef }): JSX.Element {
   );
 }
 
-/** 三盞跟著玩家移動的點光源（目前房間與前後各一間）：光源數固定，不會因走動而重新編譯材質 */
+/**
+ * 房間燈光：目前房間一盞會投影的聚光燈（從天花板斜斜往下照，形成有方向的硬陰影），
+ * 前後兩間各一盞不投影的補光。光源數固定，走動時不會重新編譯材質；陰影貼圖只有一張。
+ */
 function RoomLights(): JSX.Element {
-  const refs = [useRef<PointLight>(null), useRef<PointLight>(null), useRef<PointLight>(null)];
+  const key = useRef<SpotLight>(null);
+  const target = useMemo(() => new Object3D(), []);
+  const fills = [useRef<PointLight>(null), useRef<PointLight>(null)];
+  useEffect(() => {
+    const k = key.current;
+    if (!k) return;
+    k.target = target;
+    k.shadow.mapSize.set(1024, 1024);
+    k.shadow.bias = -0.0006;
+    k.shadow.normalBias = 0.03;
+    k.shadow.camera.near = 0.4;
+    k.shadow.camera.far = 14;
+  }, [target]);
   useFrame((_, dt) => {
     const cur = roomAtZ(pose.z);
     const w = useStore.getState().world;
-    refs.forEach((ref, i) => {
+    const k = key.current;
+    const zone = ZONES.find((z) => z.index === cur);
+    if (k && zone) {
+      const cz = (zone.minZ + zone.maxZ) / 2;
+      if (Math.abs(target.position.z - (cz + 0.8)) > 0.01) {
+        k.position.set(1.4, WALL_HEIGHT - 0.12, cz - 1.6);
+        target.position.set(-0.4, 0, cz + 0.8);
+        target.updateMatrixWorld();
+        k.intensity = 0;
+      }
+      k.intensity = MathUtils.damp(k.intensity, 46 * roomPower(cur, w), 3, dt);
+    }
+    fills.forEach((ref, i) => {
       const l = ref.current;
       if (!l) return;
-      const idx = cur - 1 + i;
-      const zone = ZONES.find((z) => z.index === idx);
-      if (!zone) {
+      const idx = i === 0 ? cur - 1 : cur + 1;
+      const z = ZONES.find((q) => q.index === idx);
+      if (!z) {
         l.intensity = MathUtils.damp(l.intensity, 0, 6, dt);
         return;
       }
-      const cz = (zone.minZ + zone.maxZ) / 2;
+      const cz = (z.minZ + z.maxZ) / 2;
       if (Math.abs(l.position.z - cz) > 0.01) {
-        l.position.set(0, 2.35, cz);
+        l.position.set(0, 2.6, cz);
         l.intensity = 0;
       }
-      l.intensity = MathUtils.damp(l.intensity, 13 * roomPower(idx, w), 3, dt);
+      l.intensity = MathUtils.damp(l.intensity, 7 * roomPower(idx, w), 3, dt);
     });
   });
   return (
     <group>
-      {refs.map((r, i) => (
-        <pointLight key={i} ref={r} position={[0, 2.35, i * ROOM_PITCH]} color="#F3F2EC" intensity={0} distance={11.5} decay={1.35} />
+      <primitive object={target} />
+      <spotLight ref={key} castShadow color="#D5E0E3" angle={1.2} penumbra={0.6} distance={15} decay={1.5} intensity={0} position={[1.4, 3.08, 3.6]} />
+      {fills.map((r, i) => (
+        <pointLight key={i} ref={r} position={[0, 2.6, i * ROOM_PITCH]} color="#B9C6CA" intensity={0} distance={11} decay={1.5} />
       ))}
     </group>
   );
@@ -481,6 +513,42 @@ function ExitLight(): JSX.Element {
     <mesh position={[0, 1.4, EXIT_RECT.maxZ - 0.03]} rotation={[0, Math.PI, 0]} material={mat}>
       <planeGeometry args={[2.2, 2.6]} />
     </mesh>
+  );
+}
+
+/**
+ * 回聲風險區：天花板上的聲學感測器與地上的警示圈（看得見的人看得到，可以告訴盲區員什麼時候安全）。
+ * 燈號：熄滅＝休息、琥珀色閃爍＝預警、紅色＝警戒（此時在圈內發出回聲會被偵測）。
+ */
+function RiskSensors(): JSX.Element {
+  return (
+    <>
+      {CHAPTER1_ACOUSTICS.risks.map((r) => (
+        <RiskSensor key={r.id} id={r.id} pos={r.pos} radius={r.radius} />
+      ))}
+    </>
+  );
+}
+
+function RiskSensor({ id, pos, radius }: { id: string; pos: [number, number]; radius: number }): JSX.Element {
+  const state = useStore((s) => s.risks.find((x) => x.id === id)?.state ?? 'idle');
+  const lamp = useMemo(() => new MeshBasicMaterial({ color: '#2E2624' }), []);
+  const ring = useMemo(() => new MeshBasicMaterial({ color: '#6E5B33', transparent: true, opacity: 0.55 }), []);
+  useFrame(({ clock }) => {
+    const blink = Math.floor(clock.elapsedTime * 4) % 2 === 0;
+    lamp.color.set(state === 'armed' ? '#D2493C' : state === 'warning' ? (blink ? '#C5A568' : '#3A3226') : '#2E2624');
+    ring.color.set(state === 'armed' ? '#8E3A30' : '#6E5B33');
+  });
+  return (
+    <group position={[pos[0], 0, pos[1]]}>
+      <Cyl p={[0, WALL_HEIGHT - 0.12, 0]} r={0.28} h={0.22} m={M.steel} seg={12} />
+      <mesh position={[0, WALL_HEIGHT - 0.26, 0]} material={lamp}>
+        <sphereGeometry args={[0.1, 10, 6]} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]} material={ring}>
+        <ringGeometry args={[radius - 0.07, radius, 48]} />
+      </mesh>
+    </group>
   );
 }
 
@@ -880,79 +948,6 @@ function Markers(): JSX.Element {
 
 /* ------------------------------- 隊友 ------------------------------- */
 
-function Avatar({ role }: { role: Role }): JSX.Element {
-  const info = ROLE_INFO[role];
-  const group = useRef<Group>(null);
-  const body = useRef<Group>(null);
-  const players = useStore((s) => s.room?.players);
-  const name = players?.find((p) => p.role === role)?.name ?? info.name;
-  const online = players?.find((p) => p.role === role)?.connected ?? false;
-  const tag = useMemo(() => nameTexture(`${info.letter}　${name}`), [info.letter, name]);
-  const plate = useMemo(() => rolePlate(info.letter), [info.letter]);
-
-  useFrame(({ clock }) => {
-    const r = remotes[role];
-    const g = group.current;
-    if (!g) return;
-    if (!r) {
-      g.visible = false;
-      return;
-    }
-    g.visible = online;
-    g.position.set(r.x, 0, r.z);
-    g.rotation.y = r.yaw;
-    const moving = performance.now() - r.movedAt < 300;
-    if (body.current) body.current.position.y = moving ? Math.abs(Math.sin(clock.elapsedTime * 9)) * 0.035 : 0;
-  });
-
-  return (
-    <group ref={group} visible={false}>
-      <mesh position={[0, 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[1.1, 1.1]} />
-        <meshBasicMaterial map={contactShadow()} transparent depthWrite={false} />
-      </mesh>
-      <group ref={body}>
-        {[-0.11, 0.11].map((x) => (
-          <group key={x}>
-            <B p={[x, 0.05, -0.03]} s={[0.13, 0.1, 0.27]} m={M.ink} />
-            <Cyl p={[x, 0.45, 0]} r={0.075} h={0.72} m={M.powder} />
-          </group>
-        ))}
-        <B p={[0, 0.84, 0]} s={[0.48, 0.09, 0.3]} m={M.ink} />
-        <B p={[0, 1.13, 0]} s={[0.46, 0.5, 0.28]} m={M.enamel} />
-        <B p={[0, 1.41, 0]} s={[0.52, 0.07, 0.3]} m={M.ink} />
-        {[-0.3, 0.3].map((x) => (
-          <Cyl key={x} p={[x, 1.1, 0]} r={0.062} h={0.6} m={M.enamel} />
-        ))}
-        <mesh position={[0, 1.18, -0.142]} rotation={[0, Math.PI, 0]}>
-          <planeGeometry args={[0.18, 0.18]} />
-          <meshBasicMaterial map={plate} />
-        </mesh>
-        <mesh position={[0, 1.18, 0.142]}>
-          <planeGeometry args={[0.18, 0.18]} />
-          <meshBasicMaterial map={plate} />
-        </mesh>
-        <Cyl p={[0, 1.48, 0]} r={0.07} h={0.08} m={M.ink} />
-        <mesh position={[0, 1.63, 0]} material={M.enamel}>
-          <sphereGeometry args={[0.17, 18, 14]} />
-        </mesh>
-        {role === 'BLIND' && <B p={[0, 1.66, -0.13]} s={[0.33, 0.09, 0.09]} m={M.ink} />}
-        {role === 'DEAF' && (
-          <>
-            <Cyl p={[-0.18, 1.63, 0]} r={0.08} h={0.07} m={M.ink} rot={[0, 0, Math.PI / 2]} />
-            <Cyl p={[0.18, 1.63, 0]} r={0.08} h={0.07} m={M.ink} rot={[0, 0, Math.PI / 2]} />
-            <B p={[0, 1.81, 0]} s={[0.38, 0.035, 0.05]} m={M.ink} />
-          </>
-        )}
-        {role === 'MUTE' && <B p={[0, 1.56, -0.14]} s={[0.19, 0.085, 0.08]} m={M.ink} />}
-      </group>
-      <sprite position={[0, 2.08, 0]} scale={[0.9, 0.19, 1]}>
-        <spriteMaterial map={tag} transparent depthWrite={false} />
-      </sprite>
-    </group>
-  );
-}
-
 function Avatars({ me }: { me: Role | null }): JSX.Element | null {
   if (!me) return null;
   return (
@@ -960,7 +955,7 @@ function Avatars({ me }: { me: Role | null }): JSX.Element | null {
       {(['BLIND', 'DEAF', 'MUTE'] as Role[])
         .filter((r) => r !== me)
         .map((r) => (
-          <Avatar key={r} role={r} />
+          <CrewAvatar key={r} role={r} />
         ))}
     </group>
   );
@@ -973,10 +968,11 @@ function Rig(): null {
   const shake = useRef(0);
   useEffect(() => {
     camera.rotation.order = 'YXZ';
-    scene.background = new Color('#C9C8C2');
-    scene.fog = new FogExp2('#C9C8C2', 0.038);
+    // 冷色、有限的能見度：同一個房間內的線索看得清楚，隔兩個房間就沒入霧裡
+    scene.background = new Color('#11171A');
+    scene.fog = new FogExp2('#11171A', 0.062);
     gl.toneMapping = NeutralToneMapping;
-    gl.toneMappingExposure = 1.0;
+    gl.toneMappingExposure = 1.05;
   }, [camera, scene, gl]);
   // 回饋：推不開的門會讓視角短暫震動（事件連動，不做隨機晃動）
   useEffect(() => on('fx', (f) => {
@@ -1025,17 +1021,21 @@ for (const d of DEVICES) {
 
 export default function Scene(): JSX.Element {
   const role = useStore((s) => s.me?.role ?? null);
+  const retro = useStore((s) => s.prefs.retro) || new URLSearchParams(location.search).get('retro') === '1';
   const fontsReady = useFontsReady();
   return (
     <Canvas
-      dpr={[1, 1.5]}
+      key={retro ? 'retro' : 'normal'}
+      shadows="percentage"
+      dpr={retro ? 0.5 : [1, 1.5]}
+      className={retro ? 'retro' : undefined}
       camera={{ fov: 72, near: 0.05, far: 60, position: [0, 1.6, 0] }}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       style={{ position: 'absolute', inset: 0 }}
     >
       <Rig />
-      <hemisphereLight args={['#F2F2EE', '#8E908C', 1.1]} />
-      <ambientLight intensity={0.12} color="#E8E5DC" />
+      <hemisphereLight args={['#7E9099', '#161B1A', 0.75]} />
+      <ambientLight intensity={0.06} color="#9AA8AC" />
       <RoomLights />
       {ZONES.map((z) => (
         <RoomGroup key={z.id} index={z.index}>
@@ -1060,6 +1060,7 @@ export default function Scene(): JSX.Element {
       ))}
       <R1SymbolLamps />
       <R4Landmark />
+      <RiskSensors />
       <CoreLoop />
       <ExitPortals />
       <ExitLight />

@@ -131,6 +131,7 @@ export class Chapter implements ChapterApi {
     const fails = (this.locks.get(key)?.fails ?? 0) + 1;
     const ms = Math.min(this.lockBaseMs * 2 ** (fails - 1), this.lockBaseMs * 4);
     this.locks.set(key, { fails, until: this.now() + ms });
+    this.hooks.penalized?.(role);
     return ms;
   }
 

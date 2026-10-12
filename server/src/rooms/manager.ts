@@ -124,6 +124,8 @@ export class RoomManager {
     socket.on('room:start', guard((ack) => this.onStart(socket, ack)));
     socket.on('room:restart', guard((ack) => this.onRestart(socket, ack)));
     socket.on('player:move', guard((p) => this.onMove(socket, p)));
+    socket.on('player:stance', guard((p) => this.onStance(socket, p)));
+    socket.on('echo:pulse', guard(() => this.onEchoPulse(socket)));
     socket.on('device:open', guard((p, ack) => typeof p === 'function' ? this.onDeviceOpen(socket, undefined as never, p) : this.onDeviceOpen(socket, p, ack)));
     socket.on('puzzle:action', guard((p, ack) => typeof p === 'function' ? this.onPuzzleAction(socket, undefined as never, p) : this.onPuzzleAction(socket, p, ack)));
     socket.on('signal:mark', guard((p, ack) => typeof p === 'function' ? this.onMark(socket, undefined as never, p) : this.onMark(socket, p, ack)));
@@ -385,6 +387,22 @@ export class RoomManager {
     c.room.handleMove(c.player, p);
   }
 
+  /** 身體姿態：只接受兩個布林值；頻率限制與移動共用 */
+  private onStance(socket: GameSocket, p: { crouch: boolean; panel: boolean }): void {
+    if (!socket.data.bucketMove.take()) return;
+    const c = this.ctx(socket);
+    if (!c || !this.playing(c) || !p || typeof p !== 'object') return;
+    c.room.setStance(c.player, p.crouch === true, p.panel === true);
+  }
+
+  /** 回聲脈衝：沒有參數也沒有回覆；頻率限制與移動共用，伺服器另外有自己的冷卻判定 */
+  private onEchoPulse(socket: GameSocket): void {
+    if (!socket.data.bucketMove.take()) return;
+    const c = this.ctx(socket);
+    if (!c || !this.playing(c)) return;
+    c.room.echoPulse(c.player);
+  }
+
   private playing(c: { room: Room; player: PlayerRec }): c is { room: Room & { chapter: NonNullable<Room['chapter']> }; player: PlayerRec & { role: Role } } {
     return c.room.phase === 'PLAYING' && !!c.room.chapter && !!c.player.role;
   }
@@ -406,6 +424,7 @@ export class RoomManager {
     if (far) return reply(ack, fail(far));
     const r = c.room.chapter.openDevice(c.player.role, p.deviceId);
     if (!r.ok) return reply(ack, fail(r.error));
+    c.room.startActivity(c.player, p.deviceId);
     reply(ack, { ok: true, view: r.view });
   }
 
@@ -424,7 +443,10 @@ export class RoomManager {
       const far = this.inRange(c, p.targetId);
       if (far) return reply(ack, bad(far));
     }
-    reply(ack, c.room.chapter.action(c.player.id, c.player.role, p));
+    const result = c.room.chapter.action(c.player.id, c.player.role, p);
+    // 直接互動的設備（推門）：隊友看到一個短暫的「操作」動作
+    if (!portal && DEVICE_BY_ID[p.targetId]?.direct) c.room.startActivity(c.player, p.targetId, 1200);
+    reply(ack, result);
   }
 
   /** 失語員的標記工具：指向一個設備（可附一個符號）。不會推進任何謎題狀態 */

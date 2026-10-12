@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "generator": "tools/characters/build_crew.py",
+  "note": "程式產生的風格化低多邊形模型（原型等級）。正式模型可在 overrides 指定，載入失敗時會退回這裡的模型。",
+  "animations": "crew_anims.glb",
+  "bones": [
+    "hips",
+    "spine",
+    "chest",
+    "neck",
+    "head",
+    "shoulder_L",
+    "upperArm_L",
+    "lowerArm_L",
+    "hand_L",
+    "upperLeg_L",
+    "lowerLeg_L",
+    "foot_L",
+    "shoulder_R",
+    "upperArm_R",
+    "lowerArm_R",
+    "hand_R",
+    "upperLeg_R",
+    "lowerLeg_R",
+    "foot_R"
+  ],
+  "requiredClips": [
+    "Idle",
+    "Walk",
+    "Run",
+    "StartMoving",
+    "StopMoving",
+    "Turn",
+    "Crouch",
+    "Interact",
+    "Inspect",
+    "Hurt",
+    "Death"
+  ],
+  "clips": {
+    "Idle": {
+      "frames": 120,
+      "loop": true
+    },
+    "Walk": {
+      "frames": 36,
+      "loop": true
+    },
+    "Run": {
+      "frames": 20,
+      "loop": true
+    },
+    "StartMoving": {
+      "frames": 10,
+      "loop": false
+    },
+    "StopMoving": {
+      "frames": 20,
+      "loop": false
+    },
+    "Turn": {
+      "frames": 24,
+      "loop": true
+    },
+    "Crouch": {
+      "frames": 12,
+      "loop": false
+    },
+    "CrouchIdle": {
+      "frames": 80,
+      "loop": true
+    },
+    "CrouchWalk": {
+      "frames": 40,
+      "loop": true
+    },
+    "Interact": {
+      "frames": 48,
+      "loop": true
+    },
+    "InteractHigh": {
+      "frames": 48,
+      "loop": true
+    },
+    "Inspect": {
+      "frames": 96,
+      "loop": true
+    },
+    "Observe": {
+      "frames": 90,
+      "loop": true
+    },
+    "Hurt": {
+      "frames": 24,
+      "loop": false
+    },
+    "Death": {
+      "frames": 64,
+      "loop": false
+    }
+  },
+  "roles": {
+    "BLIND": {
+      "model": "crew_blind.glb",
+      "height": 1.79
+    },
+    "DEAF": {
+      "model": "crew_deaf.glb",
+      "height": 1.79
+    },
+    "MUTE": {
+      "model": "crew_mute.glb",
+      "height": 1.79
+    }
+  },
+  "overrides": {},
+  "stats": {
+    "BLIND": {
+      "triangles": 1549,
+      "vertices": 961
+    },
+    "DEAF": {
+      "triangles": 1631,
+      "vertices": 990
+    },
+    "MUTE": {
+      "triangles": 1581,
+      "vertices": 977
+    }
+  }
+}

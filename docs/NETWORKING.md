@@ -28,6 +28,7 @@
 | `puzzle:action` `{puzzleId, actionType, targetId, payload, requestId}` | 規格 1.3 的統一謎題操作（設備按鈕、推門、走進門洞）。`requestId` 必填；客戶端逾時會用**同一個** `requestId` 重送一次 |
 | `signal:emit` `{tokens}` | 信號器 |
 | `signal:mark` `{targetId, token?}` | 失語員的標記工具（不推進任何謎題狀態） |
+| `echo:pulse`（沒有參數） | 盲區員發出回聲。只用來判定回聲風險區：伺服器用自己記錄的位置與時間判斷，沒有回覆；其他角色、干擾中、過於頻繁的脈衝直接忽略 |
 | `debug:state` / `debug:command` `{cmd}` | 開發者工具（見第 7 節） |
 | `hint:request` | 請求下一層提示 |
 | `voice:ready` / `voice:signal` | 語音 |
@@ -44,6 +45,8 @@
 | `signal:received` / `signal:marker` | 信號、標記（附帶的符號依接收者感官過濾） |
 | `world:positions` / `player:correct` | 位置（10Hz）、位置修正；`teleport: true` 表示謎題造成的傳送 |
 | `player:log` | 私人線索紀錄 |
+| `risk:state` | 聲學感測器狀態改變（`{id, state: idle／warning／armed, msLeft}`）；完整同步資料也帶有 `risks` |
+| `risk:tripped` `{id, jamMs}` | 感測器偵測到回聲：全隊播放警報；盲區員的回聲被干擾 `jamMs` 毫秒。同時廣播一則 `notice` |
 | `device:refresh` | 謎題狀態真的改變時，要求開著的面板重新取得內容（純查詢操作不會觸發，避免蓋掉操作回傳的專屬畫面） |
 | `notice`、`chapter:complete`、`room:closed`、`game:restarted`、`voice:signal`、`voice:peer` | 其他 |
 

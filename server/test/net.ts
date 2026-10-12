@@ -179,7 +179,7 @@ export interface Table {
   close(): Promise<void>;
 }
 
-const serverRoom = (t: Table) => t.server.manager.rooms.get(t.code)!;
+export const serverRoom = (t: Table) => t.server.manager.rooms.get(t.code)!;
 export const serverPose = (t: Table, role: Role) => [...serverRoom(t).players.values()].find((p) => p.role === role)!.pose;
 
 async function stepTo(t: Table, c: TestClient, tx: number, tz: number, stepLen = 2.4): Promise<void> {

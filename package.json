@@ -18,7 +18,10 @@
     "start": "npm run start -w server",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w server && npm run typecheck -w client && tsc -p e2e/tsconfig.json",
     "test": "npm run test -w server",
-    "e2e": "tsx e2e/browser-playthrough.ts http://localhost:3001 e2e-shots"
+    "e2e": "tsx e2e/browser-playthrough.ts http://localhost:3001 e2e-shots",
+    "e2e:assets": "tsx e2e/character-assets.ts http://localhost:3001",
+    "models": "python3 tools/characters/build_crew.py",
+    "e2e:blind": "tsx e2e/blind-lab.ts http://localhost:3001"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",

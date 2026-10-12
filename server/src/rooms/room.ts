@@ -1,9 +1,11 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Server } from 'socket.io';
 import {
+  CHAPTER1_ACOUSTICS,
   EYE_HEIGHT,
   LEVEL_BOUNDS,
   MAX_SPEED,
+  DEVICE_BY_ID,
   ROLE_INFO,
   closedDoors,
   PLAYER_RADIUS,
@@ -17,6 +19,7 @@ import {
   type FullSync,
   type LogEntry,
   type MovePayload,
+  type PlayerActivity,
   type PlayerPose,
   type PlayerPublic,
   type PositionsMsg,
@@ -28,6 +31,7 @@ import {
   type ZoneId,
 } from '@null-protocol/shared';
 import { Chapter } from '../game/chapter';
+import { EchoRiskTracker } from '../game/echoRisk';
 import type { ChapterHooks } from '../game/types';
 
 export type IO = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -57,7 +61,24 @@ export interface PlayerRec {
   micEnabled: boolean;
   /** 上一次送給這位玩家的授權線索（沒變就不重送） */
   lastClues: string;
+  /** 身體姿態（只給隊友的角色動畫用；不影響碰撞、權限、謎題） */
+  body: BodyRec;
 }
+
+export interface BodyRec {
+  crouch: boolean;
+  act: PlayerActivity | null;
+  /** 開始操作／觀察時的位置：離開超過 1.2 m 就結束 */
+  actAt: { x: number; z: number } | null;
+  /** 短暫動作（例如推門）的結束時間；0＝持續到面板關閉 */
+  actUntil: number;
+  hurt: number;
+}
+
+const newBody = (): BodyRec => ({ crouch: false, act: null, actAt: null, actUntil: 0, hurt: 0 });
+
+/** 依設備種類決定隊友看到的動作：文件與顯示器是「觀察」，其餘是「操作」 */
+const INSPECT_KINDS = new Set(['document', 'monitor', 'light_panel', 'symbol_panel']);
 
 export interface RoomOptions {
   syncWindowMs: number;
@@ -104,6 +125,8 @@ export class Room {
   readonly players = new Map<string, PlayerRec>();
   hostId = '';
   chapter: Chapter | null = null;
+  /** 回聲風險區（聲學感測器）；遊戲開始時建立 */
+  risk: EchoRiskTracker | null = null;
 
   private colliderCache: { key: string; boxes: Box[] } | null = null;
   private posTimer: ReturnType<typeof setInterval> | null = null;
@@ -148,6 +171,7 @@ export class Room {
       voiceReady: false,
       micEnabled: false,
       lastClues: '',
+      body: newBody(),
     };
     this.players.set(p.id, p);
     if (!this.hostId) this.hostId = p.id;
@@ -247,6 +271,8 @@ export class Room {
       pos: this.phase === 'LOBBY' ? null : { ...p.pose },
       clues,
       debug: !!this.opts.debugTools,
+      risks: this.risk?.statuses() ?? [],
+      ...(p.role === 'BLIND' && this.risk?.jamLeft() ? { echoJamMs: this.risk.jamLeft() } : {}),
     };
   }
 
@@ -275,8 +301,10 @@ export class Room {
       p.lastSeq = 0;
       p.log.clear();
       p.lastClues = '';
+      p.body = newBody();
     }
     this.colliderCache = null;
+    this.risk = new EchoRiskTracker(CHAPTER1_ACOUSTICS.risks);
     this.chapter = new Chapter(this.makeHooks(), {
       syncWindowMs: this.opts.syncWindowMs,
       hintCooldownMs: this.opts.hintCooldownMs,
@@ -301,6 +329,7 @@ export class Room {
   private disposeChapter(): void {
     this.chapter?.dispose();
     this.chapter = null;
+    this.risk = null;
     this.stopPositionLoop();
   }
 
@@ -352,6 +381,12 @@ export class Room {
         this.emitRoomState();
       },
       teleport: (zone, spots) => this.teleport(zone, spots),
+      penalized: (role) => {
+        const p = this.byRole(role);
+        if (!p) return;
+        p.body.hurt += 1;
+        this.dirtyPositions = true;
+      },
       isConnected: (role) => this.byRole(role)?.connected ?? false,
     };
   }
@@ -429,7 +464,12 @@ export class Room {
 
   private startPositionLoop(): void {
     if (this.posTimer) return;
-    this.posTimer = setInterval(() => this.broadcastPositions(false), 100);
+    this.posTimer = setInterval(() => {
+      this.tickBodies();
+      this.broadcastPositions(false);
+      const risks = this.risk?.tick();
+      if (risks) this.io.to(this.channel).emit('risk:state', risks);
+    }, 100);
   }
 
   private stopPositionLoop(): void {
@@ -442,9 +482,71 @@ export class Room {
     this.dirtyPositions = false;
     const msg: PositionsMsg = {};
     for (const p of this.players.values()) {
-      if (p.role) msg[p.role] = { ...p.pose };
+      if (!p.role) continue;
+      const b = p.body;
+      msg[p.role] = { ...p.pose, ...(b.crouch ? { crouch: true } : {}), ...(b.act ? { act: b.act } : {}), ...(b.hurt ? { hurt: b.hurt } : {}) };
     }
     this.io.to(this.channel).emit('world:positions', msg);
+  }
+
+  /* ---------------------------- 身體姿態（純外觀） ---------------------------- */
+
+  setStance(p: PlayerRec, crouch: boolean, panel: boolean): void {
+    let changed = false;
+    if (p.body.crouch !== crouch) {
+      p.body.crouch = crouch;
+      changed = true;
+    }
+    // 客戶端只能「結束」動作；開始操作／觀察一律由伺服器在開啟設備成功時判定
+    if (!panel && p.body.act && p.body.actUntil === 0) {
+      p.body.act = null;
+      p.body.actAt = null;
+      changed = true;
+    }
+    if (changed) this.dirtyPositions = true;
+  }
+
+  /** 開啟設備成功（持續到面板關閉或走開）；ms＞0 為短暫動作（直接互動，例如推門） */
+  startActivity(p: PlayerRec, deviceId: string, ms = 0): void {
+    const dev = DEVICE_BY_ID[deviceId];
+    if (!dev) return;
+    p.body.act = ms === 0 && INSPECT_KINDS.has(dev.kind) ? 'inspect' : 'interact';
+    p.body.actAt = { x: p.pose.x, z: p.pose.z };
+    p.body.actUntil = ms > 0 ? Date.now() + ms : 0;
+    this.dirtyPositions = true;
+  }
+
+  private tickBodies(): void {
+    const now = Date.now();
+    for (const p of this.players.values()) {
+      const b = p.body;
+      if (!b.act) continue;
+      const walked = b.actAt ? Math.hypot(p.pose.x - b.actAt.x, p.pose.z - b.actAt.z) > 1.2 : false;
+      if ((b.actUntil > 0 && now > b.actUntil) || walked || !p.connected) {
+        b.act = null;
+        b.actAt = null;
+        b.actUntil = 0;
+        this.dirtyPositions = true;
+      }
+    }
+  }
+
+  /* ---------------------------- 回聲風險區 ---------------------------- */
+
+  /**
+   * 盲區員發出回聲。用伺服器記錄的位置判定；被偵測時全隊收到警報（聲音給聽得見的人、文字給看得見的人），
+   * 盲區員的回聲被干擾一段時間。不回覆任何資料，也不改變謎題狀態。
+   */
+  echoPulse(p: PlayerRec): void {
+    if (this.phase !== 'PLAYING' || p.role !== 'BLIND' || !this.risk) return;
+    const zone = zoneAt(p.pose.x, p.pose.z)?.id ?? null;
+    const hit = this.risk.pulse(p.pose.x, p.pose.z, zone);
+    if (!hit) return;
+    this.io.to(this.channel).emit('risk:tripped', hit);
+    this.io.to(this.channel).emit('notice', {
+      tone: 'warn',
+      text: `聲學感測器偵測到回聲：警報響起，盲區員的回聲受到干擾 ${Math.round(hit.jamMs / 1000)} 秒。`,
+    });
   }
 
   /* ---------------------------- 語音狀態 ---------------------------- */

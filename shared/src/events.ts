@@ -6,6 +6,7 @@ import type {
   PuzzleId,
   SceneClues,
 } from './puzzle-types';
+import type { RiskStatus } from './acoustics';
 import type { Role } from './roles';
 import type { SignalToken } from './signals';
 import type {
@@ -94,6 +95,10 @@ export interface FullSync {
   clues: SceneClues;
   /** 伺服器是否開放開發者工具 */
   debug: boolean;
+  /** 回聲風險區（聲學感測器）目前的狀態 */
+  risks: RiskStatus[];
+  /** 只給盲區員：回聲還會被干擾多久（毫秒） */
+  echoJamMs?: number;
 }
 
 /** 客戶端 → 伺服器 */
@@ -107,6 +112,13 @@ export interface ClientToServerEvents {
   'room:restart': (ack: (r: Ack) => void) => void;
 
   'player:move': (p: MovePayload) => void;
+  /** 身體姿態：蹲下、面板是否開著（關掉面板時結束「操作／觀察」動作） */
+  'player:stance': (p: { crouch: boolean; panel: boolean }) => void;
+  /**
+   * 盲區員發出回聲脈衝。只用來判定回聲風險區（伺服器用自己記錄的位置與時間）；
+   * 不帶任何資料、也沒有回覆內容，所以不會成為取得隱藏資訊的管道。
+   */
+  'echo:pulse': () => void;
 
   'device:open': (p: { deviceId: string }, ack: (r: Ack<{ view: PanelView | null; message?: string }>) => void) => void;
   'puzzle:action': (p: PuzzleActionPayload, ack: (r: ActionResult) => void) => void;
@@ -133,6 +145,10 @@ export interface ServerToClientEvents {
   'puzzle:hint': (p: { puzzleId: PuzzleId; tier: number; text: string }) => void;
   'signal:marker': (p: { from: Role; targetId: string; token?: SignalToken }) => void;
   'world:positions': (p: PositionsMsg) => void;
+  /** 聲學感測器的狀態改變（休息／預警／警戒） */
+  'risk:state': (p: RiskStatus[]) => void;
+  /** 聲學感測器偵測到回聲：所有人收到警報；盲區員的回聲被干擾 jamMs 毫秒 */
+  'risk:tripped': (p: { id: string; jamMs: number }) => void;
   /** 伺服器校正位置；teleport＝謎題造成的傳送（客戶端同時套用朝向並播放空間轉換效果） */
   'player:correct': (p: { x: number; y: number; z: number; yaw: number; teleport?: boolean }) => void;
   'player:log': (log: LogEntry[]) => void;

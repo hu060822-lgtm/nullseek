@@ -62,8 +62,12 @@ async function newPlayer(role: Role): Promise<Page> {
   const page = await ctx.newPage();
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(`[${role}] ${m.text()}`);
+    // 角色模型載入失敗會退回備用人形（只是警告）；正式的通關測試要求模型全部正常載入
+    if (m.type() === 'warning' && m.text().includes('[角色]')) errors.push(`[${role}] ${m.text()}`);
   });
   page.on('pageerror', (e) => errors.push(`[${role}] pageerror: ${e.message}`));
+  // tsx（esbuild）會把傳進 page.evaluate 的具名函式包上 __name()；頁面裡沒有這個輔助函式
+  await page.addInitScript('window.__name = (f) => f;');
   await page.goto(`${BASE}/?debug`);
   return page;
 }
@@ -90,10 +94,21 @@ async function stepTo(p: Page, x: number, z: number): Promise<void> {
         const pose = (window as unknown as Win).__NP__.pose;
         let lx = pose.x;
         let lz = pose.z;
+        // 位置每畫一幀才送出一次；軟體算繪只有 1–2 fps，每幀最多走 1.5 m，
+        // 避免一次送出的位移超過伺服器的防瞬移額度（2.5 m）而被拉回
+        let movedThisFrame = 0;
+        let raf = 0;
+        const onFrame = () => {
+          movedThisFrame = 0;
+          raf = requestAnimationFrame(onFrame);
+        };
+        raf = requestAnimationFrame(onFrame);
         const t = setInterval(() => {
+          if (movedThisFrame >= 1.5) return;
           // 伺服器傳送（或校正）了位置：停止這段走路，就像玩家放開按鍵
           if (Math.hypot(pose.x - lx, pose.z - lz) > 0.5) {
             clearInterval(t);
+            cancelAnimationFrame(raf);
             resolve();
             return;
           }
@@ -105,11 +120,13 @@ async function stepTo(p: Page, x: number, z: number): Promise<void> {
             pose.x = tx;
             pose.z = tz;
             clearInterval(t);
+            cancelAnimationFrame(raf);
             requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 90)));
             return;
           }
           pose.x += (dx / d) * s;
           pose.z += (dz / d) * s;
+          movedThisFrame += s;
           pose.yaw = Math.atan2(-dx, -dz);
           lx = pose.x;
           lz = pose.z;
@@ -198,7 +215,18 @@ async function openPanel(role: Role, deviceId: string): Promise<PanelView> {
   await closePanel(p);
   await walkToDevice(role, deviceId);
   await p.keyboard.press('KeyE');
-  await p.waitForFunction((id) => (window as unknown as Win).__NP__.useStore.getState().panel?.deviceId === id, deviceId, { timeout: 20000 });
+  try {
+    await p.waitForFunction((id) => (window as unknown as Win).__NP__.useStore.getState().panel?.deviceId === id, deviceId, { timeout: 20000 });
+  } catch (e) {
+    const d = DEVICE_BY_ID[deviceId];
+    const info = await p.evaluate(() => {
+      const w = window as unknown as Win;
+      const s = w.__NP__.useStore.getState();
+      return { pose: { ...w.__NP__.pose }, notices: s.notices.map((n: { text: string }) => n.text), panel: s.panel?.deviceId ?? null, locked: s.locked, overlay: s.overlay };
+    });
+    console.log(`    [${role}] 開不了 ${deviceId}（設備位置 ${d.pos.join(',')}）：${JSON.stringify(info)}`);
+    throw e;
+  }
   await p.waitForSelector('.modal header h2');
   return (await panelOf(p))!.view;
 }
@@ -244,6 +272,12 @@ async function fillAndClick(role: Role, action: string, values: Record<string, u
     const panel = await panelOf(p);
     console.log(`    trace [${role}] after ${action} cells=${cells} result=${JSON.stringify(panel?.result)}`);
   }
+  return awaitResult(role, before);
+}
+
+/** 等面板出現新的操作結果（或面板關閉／第一章完成） */
+async function awaitResult(role: Role, before: number): Promise<ActionResult> {
+  const p = pages[role];
   await p.waitForFunction(
     (b) => {
       const s = (window as unknown as Win).__NP__.useStore.getState();
@@ -333,11 +367,30 @@ const driver: Driver = {
   enter: (role, portalId) => walkIntoPortal(role, portalId),
   clues: (role) => st<SceneClues>(pages[role], 's.clues'),
   async syncPress(presses) {
-    for (const pr of presses) {
-      const cur = await panelOf(pages[pr.role]);
-      if (cur?.deviceId !== pr.targetId) await openPanel(pr.role, pr.targetId);
-    }
-    return Promise.all(presses.map((pr) => fillAndClick(pr.role, pr.actionType, {})));
+    // 三個人各自操作自己的電腦：檢查面板與按下都同時進行。按鈕直接在頁面裡點擊——
+    // Playwright 的 click 會先等元素「連續兩幀位置不變」，軟體算繪只有 1–4 fps，光是等待就會吃掉大半的 3 秒窗口
+    await Promise.all(
+      presses.map(async (pr) => {
+        const cur = await panelOf(pages[pr.role]);
+        if (cur?.deviceId !== pr.targetId) await openPanel(pr.role, pr.targetId);
+      }),
+    );
+    const t0 = Date.now();
+    const res = await Promise.all(
+      presses.map(async (pr) => {
+        const p = pages[pr.role];
+        const before = await p.evaluate((action) => {
+          const s = (window as unknown as Win).__NP__.useStore.getState();
+          const id = (s.panel?.result?.id as number | undefined) ?? 0;
+          (document.querySelector(`button[data-action="${action}"]`) as HTMLButtonElement | null)?.click();
+          return id;
+        }, pr.actionType);
+        return awaitResult(pr.role, before);
+      }),
+    );
+    // 失敗時印出每一下的結果與耗時，方便判斷是逾時還是內容錯誤
+    if (res.some((r) => !r.ok)) console.log('    同步按下', Date.now() - t0, 'ms', res.map((r) => `${r.ok ? '✓' : '✘'} ${r.message}`));
+    return res;
   },
   activePuzzle: async () => {
     await pages.MUTE.waitForTimeout(60);
@@ -394,6 +447,24 @@ try {
   check(JSON.stringify(lc) === JSON.stringify(['BLIND>MUTE', 'DEAF>MUTE']), '失語員：只有接收，沒有任何發送');
   check((await st<boolean>(C, 's.debug')) === false, '正式環境：前端沒有開發者工具');
   check((await st<number>(B, 'Object.keys(s.clues).length')) > 0 && (await st<number>(C, 'Object.keys(s.clues).length')) === 0, '只有靜默員收到 R01 的符號燈線索');
+
+  // 盲區員的空間感知系統：只有盲區員有回聲與轉向提示；失語員只有環境聲源；靜默員完全沒有音訊
+  const sysInfo = (p: Page) =>
+    p.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sys = (window as any).__NP__.blind.system();
+      return sys ? { echo: !!sys.echo, orientation: !!sys.orientation } : null;
+    });
+  check(JSON.stringify(await sysInfo(A)) === JSON.stringify({ echo: true, orientation: true }), '盲區員：回聲與方向基準');
+  check(JSON.stringify(await sysInfo(C)) === JSON.stringify({ echo: false, orientation: false }), '失語員：只有環境聲源，沒有回聲能力');
+  check((await sysInfo(B)) === null, '靜默員：沒有任何音訊系統');
+  await A.keyboard.press('KeyF');
+  await A.waitForSelector('.echo-field[data-echo]', { timeout: 5000, state: 'attached' });
+  const echoCount = Number(await A.getAttribute('.echo-field', 'data-echo'));
+  check(echoCount > 0 && echoCount <= 16, `盲區員按 F：畫面短暫出現 ${echoCount} 個反射點（最多 16 道射線）`);
+  await A.waitForSelector('.echo-field .contour', { state: 'attached' });
+  await B.keyboard.press('KeyF');
+  check((await B.locator('.echo-field').count()) === 0, '靜默員按 F 沒有任何作用');
 
   // 失語員的標記：注視密碼輸入器按 G
   await walkToDevice('MUTE', 'r1_lock');

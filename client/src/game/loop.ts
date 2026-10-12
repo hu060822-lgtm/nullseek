@@ -1,11 +1,12 @@
-import { PORTALS, R2_DOORS, portalFront, ROLE_INFO, ZONES, rayDistance, roomRect, type DeviceKind, type R2DoorKey, type Role } from '@null-protocol/shared';
+import { CHAPTER1_ACOUSTICS, PORTALS, R2_DOORS, portalFront, ROLE_INFO, ZONES, roomRect, type DeviceKind, type DoorId, type R2DoorKey, type Role } from '@null-protocol/shared';
 import { audio } from '../audio/engine';
 import { speak } from '../audio/speech';
-import { closePanel, doAction, emitMark, enterPortal, openDevice, sendMove } from '../net/socket';
+import { closePanel, doAction, emitMark, enterPortal, openDevice, sendEchoPulse, sendMove, sendStance } from '../net/socket';
 import { puzzleOf } from './codes';
 import { useStore } from '../state/store';
 import { voice } from '../voice/voice';
 import {
+  body,
   clearKeys,
   currentTarget,
   currentZone,
@@ -15,11 +16,14 @@ import {
   nextMove,
   portalToEnter,
   pose,
+  setCrouch,
   setKey,
   step,
 } from './controller';
 import { remotes, smooth } from './remote';
-import { emit } from './bus';
+import { emit, on } from './bus';
+import { BlindAudioSystem } from './blind';
+import { takeEchoJam } from './blind/pending';
 
 /** 不同設備種類用不同音高的指引聲，盲區員可以靠音高分辨 */
 const KIND_PITCH: Partial<Record<DeviceKind, number>> = {
@@ -102,17 +106,59 @@ function mark(): void {
   });
 }
 
-function sonar(): void {
+/**
+ * 盲區員的空間感知系統（方向基準、回聲、地標、風險區預警）。
+ * 只有聽得見的角色會建立；回聲與轉向提示只有盲區員有。遊戲畫面卸載（離開、重新開始）時整個移除。
+ */
+let blindSys: BlindAudioSystem | null = null;
+let blindSysRole: Role | null = null;
+
+const doorOpen = (door: string): boolean => !!useStore.getState().world?.doors[door as DoorId];
+
+function systemFor(r: Role | null): BlindAudioSystem | null {
+  if (r === blindSysRole) return blindSys;
+  blindSys?.dispose();
+  blindSys = null;
+  blindSysRole = r;
+  if (r && ROLE_INFO[r].canHear) {
+    blindSys = new BlindAudioSystem({ level: CHAPTER1_ACOUSTICS, blind: !ROLE_INFO[r].canSee, isOpen: doorOpen, speak: (t) => speak(t, { interrupt: true }) });
+  }
+  return blindSys;
+}
+
+/** 測試與開發者工具用（?debug 時掛在 window.__NP__ 上） */
+export const blindDebug = { system: (): BlindAudioSystem | null => blindSys };
+
+function echoPulse(): void {
   const r = role();
   if (!r || ROLE_INFO[r].canSee) return; // 回聲定位是盲區員專用
-  const cols = getColliders();
-  const dir = (a: number) => {
-    const yaw = pose.yaw + a;
-    return rayDistance(pose.x, pose.z, -Math.sin(yaw), -Math.cos(yaw), cols, 12);
-  };
-  const reading = { front: dir(0), left: dir(Math.PI / 2), right: dir(-Math.PI / 2), back: dir(Math.PI) };
-  audio.sonar(reading);
-  emit('echo', reading);
+  const st = useStore.getState();
+  if (st.panel || !st.world) return;
+  const res = systemFor(r)?.pulse(pose.x, pose.z, pose.yaw, getColliders(), performance.now());
+  // 伺服器只用它判定風險區（用伺服器自己記錄的位置）；不會回傳任何資料
+  if (res?.ok) sendEchoPulse();
+}
+
+function speakHeading(): void {
+  const r = role();
+  if (!r || ROLE_INFO[r].canSee) return;
+  systemFor(r)?.speakHeading(pose.yaw);
+}
+
+/** 音訊校準：左聲道、右聲道、兩邊同時（確認音量），每一段都有語音說明 */
+export function calibrateAudio(): void {
+  void audio.init().then(() => {
+    speak('左聲道', { interrupt: true });
+    audio.testChannel('left');
+    window.setTimeout(() => {
+      speak('右聲道');
+      audio.testChannel('right');
+    }, 1400);
+    window.setTimeout(() => {
+      speak('兩邊同時');
+      audio.testChannel('both');
+    }, 2800);
+  });
 }
 
 export function bindInput(el: HTMLElement): () => void {
@@ -148,10 +194,22 @@ export function bindInput(el: HTMLElement): () => void {
         if (st.micState === 'on') voice.setMuted(!st.micMuted);
         return;
       case 'KeyF':
-        sonar();
+        echoPulse();
+        return;
+      case 'KeyV':
+        speakHeading();
+        return;
+      case 'KeyK':
+        if (!ROLE_INFO[role() ?? 'DEAF'].canHear) return;
+        calibrateAudio();
         return;
       case 'KeyG':
         mark();
+        return;
+      case 'KeyC':
+        // 蹲下／站起：只改變自己的視角高度與速度，隊友看到蹲下的動畫
+        setCrouch(!body.crouch);
+        speak(body.crouch ? '蹲下' : '站起');
         return;
       case 'Backquote':
         if (st.debug) st.set({ debugOpen: !st.debugOpen });
@@ -201,7 +259,10 @@ export function startGameLoop(): () => void {
   let announcedDevice = '';
   let lastTalk = 0;
   let nextDoorTones = 0;
+  const hurtSeen: Partial<Record<Role, number>> = {};
   let announcedPortal = '';
+  let risksSeen: unknown = null;
+  const offTripped = on('riskTripped', (p) => systemFor(role())?.tripped(p.id, p.jamMs, performance.now()));
 
   const frame = (now: number): void => {
     raf = requestAnimationFrame(frame);
@@ -222,6 +283,16 @@ export function startGameLoop(): () => void {
     }
     const m = nextMove(now);
     if (m) sendMove(m);
+    sendStance(body.crouch, !!st.panel);
+
+    // 隊友被設備鎖定（觸電）：在他的位置播放電擊聲
+    for (const who of Object.keys(remotes) as Role[]) {
+      const rp = remotes[who];
+      if (!rp) continue;
+      const prev = hurtSeen[who];
+      if (prev !== undefined && rp.hurt > prev) audio.zap([rp.x, rp.z]);
+      hurtSeen[who] = rp.hurt;
+    }
 
     // 門洞：走進去就觸發（只有目前進行中的謎題的門洞），伺服器驗證距離後才傳送
     if (!st.panel && st.overlay === 'none' && st.world) {
@@ -239,6 +310,20 @@ export function startGameLoop(): () => void {
     }
 
     audio.setListener(pose.x, pose.z, pose.yaw);
+
+    // 方向基準、聲學地標、風險區預警（遮蔽依目前房間與門的狀態）
+    const sys = systemFor(r);
+    if (sys?.echo) {
+      const jamUntil = takeEchoJam();
+      if (jamUntil > now) sys.echo.jam(jamUntil - now, now);
+    }
+    if (sys) {
+      if (st.risks !== risksSeen) {
+        risksSeen = st.risks;
+        sys.risk.setStatus(st.risks);
+      }
+      sys.update(pose.x, pose.z, pose.yaw, now);
+    }
 
     smooth(dt, (who, x, z) => audio.footstep([x, z]));
     for (const who of Object.keys(remotes) as Role[]) {
@@ -261,6 +346,8 @@ export function startGameLoop(): () => void {
         if (!!prev[k] !== !!talking[k]) changed = true;
       }
       if (changed) st.set({ talking });
+      // 隊友說話時稍微壓低環境音（參考音、地標），語音與回聲維持原本音量
+      audio.setEnvDuck(Object.values(talking).some(Boolean));
     }
 
     if (!canSee) {
@@ -271,7 +358,7 @@ export function startGameLoop(): () => void {
         const z = ZONES.find((q) => q.id === zone);
         if (z) speak(z.label);
       }
-      const near = nearestUsable(r, 9);
+      const near = st.prefs.beacon ? nearestUsable(r, 9) : null;
       if (near && now >= nextBeacon && st.world && !st.panel) {
         nextBeacon = now + Math.max(320, Math.min(1500, near.dist * 140));
         audio.beacon(near.dx, near.dz, pose.yaw, near.dist, KIND_PITCH[near.device.kind] ?? 400);
@@ -298,6 +385,10 @@ export function startGameLoop(): () => void {
     }
   };
   raf = requestAnimationFrame(frame);
-  return () => cancelAnimationFrame(raf);
+  return () => {
+    cancelAnimationFrame(raf);
+    offTripped();
+    systemFor(null);
+  };
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  CHAPTER1_ACOUSTICS,
   DEVICE_BY_ID,
   PUZZLE_IDS,
   roleCanUseDevice,
@@ -7,13 +8,15 @@ import {
   wallZ,
   type ActionResult,
   type PuzzleFeedback,
+  type RiskStatus,
   type Role,
   type RoomPublic,
   type SceneClues,
   type WorldPublic,
 } from '@null-protocol/shared';
 import { loadConfig } from '../src/config';
-import { TestClient, lobbyOfThree, serverPose, sleep, socketDriver, startServer, startedTable, walkTo, type Table } from './net';
+import { EchoRiskTracker } from '../src/game/echoRisk';
+import { TestClient, lobbyOfThree, serverPose, serverRoom, sleep, socketDriver, startServer, startedTable, walkTo, type Table } from './net';
 import { solveChapter, solveP01, solveP10Phases12 } from './solver';
 
 const tables: Table[] = [];
@@ -342,6 +345,116 @@ describe('開發者工具', () => {
 });
 
 /* ------------------------------------------------------------------ */
+
+describe('身體姿態（角色動畫用；不影響碰撞與權限）', () => {
+  type Pos = Record<string, { x: number; z: number; crouch?: boolean; act?: string; hurt?: number }>;
+  const lastPos = (c: TestClient, role: Role) => c.of<Pos>('world:positions').at(-1)?.[role];
+
+  it('蹲下會同步給隊友；客戶端不能自稱「正在操作」', async () => {
+    const t = await track(startedTable());
+    const { BLIND: a, DEAF: b } = t.clients;
+    a.fire('player:stance', { crouch: true, panel: true });
+    await b.waitFor<Pos>('world:positions', (m) => !!m.BLIND?.crouch);
+    await sleep(150);
+    expect(lastPos(b, 'BLIND')?.act).toBeUndefined(); // panel:true 不會讓伺服器認定在操作
+    a.fire('player:stance', { crouch: false, panel: false });
+    await b.waitFor<Pos>('world:positions', (m) => !!m.BLIND && !m.BLIND.crouch);
+    // 不合法的資料：忽略，伺服器不會當掉
+    a.fire('player:stance', { crouch: 'yes', panel: 1 });
+    a.fire('player:stance', null);
+    await sleep(150);
+    expect(lastPos(b, 'BLIND')?.crouch).toBeFalsy();
+  });
+
+  it('開啟設備成功 → 隊友看到「觀察／操作」；關閉面板或走開 → 結束；資料不含設備名稱', async () => {
+    const t = await track(startedTable());
+    const d = socketDriver(t);
+    const { BLIND: a, DEAF: b, MUTE: c } = t.clients;
+    await d.open('DEAF', 'r1_lamps'); // 燈號面板：觀察
+    const seen = await c.waitFor<Pos>('world:positions', (m) => m.DEAF?.act === 'inspect');
+    expect(JSON.stringify(seen)).not.toContain('r1_lamps');
+    b.fire('player:stance', { crouch: false, panel: false });
+    await c.waitFor<Pos>('world:positions', (m) => !!m.DEAF && !m.DEAF.act);
+    await d.open('BLIND', 'r1_gen'); // 機械設備：操作
+    await c.waitFor<Pos>('world:positions', (m) => m.BLIND?.act === 'interact');
+    await walkTo(t, a, 'r1_lock'); // 走開超過 1.2 m
+    await c.waitFor<Pos>('world:positions', (m) => !!m.BLIND && !m.BLIND.act);
+  });
+
+  it('答錯被設備鎖定 → 該角色的受傷次數增加（隊友看到觸電反應）', async () => {
+    const t = await track(startedTable());
+    const d = socketDriver(t);
+    const r = await d.act('MUTE', 'r1_lock', 'submit', { code: [1, 1, 1] });
+    expect(r.ok).toBe(false);
+    const m = await t.clients.DEAF.waitFor<Pos>('world:positions', (x) => (x.MUTE?.hurt ?? 0) >= 1);
+    expect(m.MUTE?.hurt).toBe(1);
+    expect(m.BLIND?.hurt).toBeUndefined();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('回聲風險區（聲學感測器；伺服器權威）', () => {
+  const def = CHAPTER1_ACOUSTICS.risks[0];
+
+  /** 讓感測器使用可控制的時鐘，並把盲區員的伺服器位置放到感測器下方（只在測試中直接設定） */
+  function rig(t: Table): { setT: (ms: number) => void } {
+    let now = 0;
+    const room = serverRoom(t);
+    room.risk = new EchoRiskTracker(CHAPTER1_ACOUSTICS.risks, () => now);
+    const pose = serverPose(t, 'BLIND');
+    pose.x = def.pos[0];
+    pose.z = def.pos[1];
+    return { setT: (ms) => void (now = ms) };
+  }
+
+  it('開始時的同步資料含有感測器狀態；狀態改變時廣播給全隊', async () => {
+    const t = await track(startedTable());
+    const r = await t.clients.MUTE.call<{ ok: boolean; sync: { risks: RiskStatus[] } }>('room:rejoin', { code: t.code, token: t.clients.MUTE.token });
+    expect(r.ok).toBe(true);
+    expect(r.sync.risks.map((x) => x.id)).toEqual([def.id]);
+    const clock = rig(t);
+    clock.setT(def.idleMs + 10);
+    const st = await t.clients.DEAF.waitFor<RiskStatus[]>('risk:state', (l) => l[0]?.state === 'armed');
+    expect(Object.keys(st[0]).sort()).toEqual(['id', 'msLeft', 'state']);
+  });
+
+  it('警戒中、在範圍內發出回聲 → 全隊收到警報與通知；休息中不會；其他角色的脈衝被忽略', async () => {
+    const t = await track(startedTable());
+    const { BLIND: a, DEAF: b, MUTE: c } = t.clients;
+    const clock = rig(t);
+    clock.setT(100); // 休息中
+    a.fire('echo:pulse');
+    await b.expectNone('risk:tripped');
+    clock.setT(def.idleMs + 100); // 警戒中
+    b.fire('echo:pulse'); // 靜默員、失語員沒有回聲能力：伺服器直接忽略
+    c.fire('echo:pulse');
+    await a.expectNone('risk:tripped');
+    clock.setT(def.idleMs + 2000);
+    a.fire('echo:pulse');
+    for (const x of [a, b, c]) {
+      const hit = await x.waitFor<{ id: string; jamMs: number }>('risk:tripped');
+      expect(hit).toEqual({ id: def.id, jamMs: def.jamMs });
+    }
+    await b.waitFor<{ text: string }>('notice', (n) => n.text.includes('聲學感測器'));
+    // 後果可以挽回：謎題狀態沒有改變
+    expect(worldOf(b).activePuzzle).toBe(PUZZLE_IDS[0]);
+    // 重新整理頁面（重連）不會解除干擾；干擾時間只給盲區員
+    const ra = await a.call<{ ok: boolean; sync: { echoJamMs?: number } }>('room:rejoin', { code: t.code, token: a.token });
+    expect(ra.sync.echoJamMs).toBeGreaterThan(0);
+    const rb = await b.call<{ ok: boolean; sync: { echoJamMs?: number } }>('room:rejoin', { code: t.code, token: b.token });
+    expect(rb.sync.echoJamMs).toBeUndefined();
+  });
+
+  it('客戶端不能謊報位置：伺服器只看自己記錄的位置（盲區員實際在 R1 時發出回聲不會觸發）', async () => {
+    const t = await track(startedTable());
+    let now = 0;
+    serverRoom(t).risk = new EchoRiskTracker(CHAPTER1_ACOUSTICS.risks, () => now);
+    now = def.idleMs + 100;
+    t.clients.BLIND.fire('echo:pulse', { x: def.pos[0], z: def.pos[1] }); // 夾帶的資料一律忽略
+    await t.clients.DEAF.expectNone('risk:tripped', () => true, 300);
+  });
+});
 
 describe('語音 signaling：由伺服器驗證角色路由', () => {
   const sdp = (dir: string, extra = '') =>

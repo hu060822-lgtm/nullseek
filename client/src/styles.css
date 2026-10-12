@@ -240,12 +240,18 @@ input.code { text-transform: uppercase; letter-spacing: 0.32em; font-size: var(-
 .blind-view .whisper kbd { color: #5d6164; }
 .echo-field { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
 .echo-field svg { position: absolute; left: -160px; top: -160px; }
-.echo-field .contour { stroke: var(--bone); stroke-width: 2; fill: none; animation: contour 1.6s ease-out forwards; }
+.echo-field .contour { stroke: var(--bone); stroke-width: 2; stroke-linecap: square; fill: none; animation: contour 1.6s ease-out forwards; }
+/* 材質：混凝土＝實線、金屬門＝較亮的粗線、設備＝點線、木頭＝細線（與回聲的音色對應） */
+.echo-field .contour.m-metal { stroke-width: 3.2; stroke: #f4f1e6; }
+.echo-field .contour.m-machine { stroke-dasharray: 2 3; }
+.echo-field .contour.m-wood { stroke-width: 1.2; }
 @keyframes contour { 0% { opacity: 0; } 12% { opacity: 0.9; } 100% { opacity: 0; } }
 .listener { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border: 1px solid #5d6164; transform: rotate(45deg); }
 .vibe { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 0 transparent; }
 .vibe.bump { animation: vibe-bump .28s ease-out; }
 .vibe.near { animation: vibe-near .5s ease-out; }
+.vibe.jam { animation: vibe-jam 1.2s steps(8) forwards; background: repeating-linear-gradient(0deg, rgba(232, 229, 220, 0.05) 0 2px, transparent 2px 7px); }
+@keyframes vibe-jam { 0% { opacity: 1; transform: translateY(0); } 50% { opacity: 0.7; transform: translateY(3px); } 100% { opacity: 0; transform: translateY(0); } }
 @keyframes vibe-bump { 0% { box-shadow: inset 0 0 0 10px rgba(232, 229, 220, 0.5); transform: translateX(-3px); } 40% { transform: translateX(3px); } 100% { box-shadow: inset 0 0 0 0 transparent; transform: none; } }
 @keyframes vibe-near { 0% { box-shadow: inset 0 0 0 4px rgba(197, 165, 104, 0.7); } 100% { box-shadow: inset 0 0 0 0 transparent; } }
 
@@ -344,7 +350,7 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: var(--t-sm); bord
 .legend { font-size: var(--t-xs); color: var(--ink-3); }
 .recv { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: var(--rule-soft); }
 
-.slider { display: grid; grid-template-columns: 100px 1fr 44px; gap: 12px; align-items: center; margin: 4px 0; font-size: var(--t-sm); }
+.slider { display: grid; grid-template-columns: 150px 1fr 44px; gap: 12px; align-items: center; margin: 4px 0; font-size: var(--t-sm); }
 .slider input { accent-color: var(--brass-deep); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: var(--t-sm); margin: 0; }
 .kv dt { white-space: nowrap; } .kv dd { margin: 0; color: var(--ink-2); }
@@ -389,3 +395,26 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: var(--t-sm); bord
 .debug .recent li.bad { color: var(--red); }
 .debug .actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-top: var(--rule); }
 .debug .lbl { color: var(--ink-3); margin-top: 6px; }
+
+/* 角色預覽頁 */
+.crew-preview { position: fixed; inset: 0; background: #2c3235; }
+.crew-preview-info { position: absolute; left: 10px; bottom: 10px; opacity: 0.85; display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; font-size: var(--t-xs); max-width: min(520px, 90vw); }
+
+/* PS1 風格低解析度算繪（選用）：半解析度畫面以像素放大 */
+canvas.retro, .retro canvas { image-rendering: pixelated; }
+
+/* 盲區員測試關卡 */
+.blind-lab { position: fixed; inset: 0; background: var(--ink); }
+.lab-brief { position: absolute; left: 16px; top: 16px; max-width: 46ch; color: #8d9194; font-size: var(--t-sm); line-height: 1.6; z-index: 5; pointer-events: none; }
+.lab-brief h1 { font-size: var(--t-md, 16px); color: var(--bone); margin: 0 0 6px; font-weight: 700; }
+.lab-brief p { margin: 0 0 6px; }
+.lab-brief kbd, .lab-brief code { color: #b9bcbd; }
+.lab-status[data-done="1"] { color: var(--bone); }
+.lab-map { position: absolute; right: 16px; top: 16px; max-width: 45vw; height: auto; background: rgba(255, 255, 255, 0.02); border: 1px solid #2a2e31; z-index: 5; }
+.lab-map .w { fill: #3a3f43; }
+.lab-map .d { fill: #8b8f92; }
+.lab-map .t { fill: #c5a568; }
+.lab-map .c { fill: #6b5a43; }
+.lab-map .risk { fill: rgba(196, 72, 60, 0.12); stroke: rgba(196, 72, 60, 0.5); }
+.lab-map .me { fill: var(--bone); stroke: var(--bone); stroke-width: 2; }
+@media (max-width: 640px) { .lab-map { display: none; } }

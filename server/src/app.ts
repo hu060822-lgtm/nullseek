@@ -1,3 +1,4 @@
+import compression from 'compression';
 import { existsSync } from 'node:fs';
 import { createServer, type Server as HttpServer } from 'node:http';
 import path from 'node:path';
@@ -38,6 +39,21 @@ export function createGameServer(overrides: Partial<ServerConfig> = {}): GameSer
   ].filter((p): p is string => !!p);
   const dist = candidates.find((p) => existsSync(path.join(p, 'index.html')));
   if (dist) {
+    // gzip：角色模型（GLB）與 JS 套件壓縮後約只剩 1/4；Socket.IO 不經過這裡
+    app.use(compression({ filter: (req, res) => /\.(glb|js|css|json|html|svg)$/.test(req.path) || compression.filter(req, res) }));
+    // 角色模型：檔名固定，快取 1 天；更新模型後重新部署即可（Render 每次部署都是新的程序）
+    app.use(
+      '/models',
+      express.static(path.join(dist, 'models'), {
+        maxAge: '1d',
+        index: false,
+        fallthrough: false, // 找不到模型就回 404，不要回傳網頁（前端會改用備用模型）
+        // manifest 決定要載入哪個模型（含正式模型的替換設定），每次都向伺服器確認
+        setHeaders: (res, file) => {
+          if (file.endsWith('manifest.json')) res.setHeader('Cache-Control', 'no-cache');
+        },
+      }),
+    );
     app.use(express.static(dist, { maxAge: '1h', index: false }));
     app.get(/^(?!\/(socket\.io|api|healthz)).*/, (_req, res) => {
       res.sendFile(path.join(dist, 'index.html'));

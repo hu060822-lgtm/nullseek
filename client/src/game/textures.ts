@@ -1,16 +1,21 @@
-import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Texture } from 'three';
+import { CanvasTexture, LinearMipmapLinearFilter, NearestFilter, RepeatWrapping, SRGBColorSpace, type Texture } from 'three';
 
 /**
  * 程序產生的材質貼圖（Canvas 2D）。不使用任何外部圖檔。
- * 色票：骨白 #E8E5DC、霧灰 #A8AAA5、炭黑 #242729、朱紅 #C64B3C、舊黃銅 #C5A568
+ *
+ * PS1 工業恐怖方向：
+ *   - 環境材質（牆、地、天花板、紙張）使用低解析度＋nearest 取樣（放大時保留像素，縮小時用 mipmap 避免閃爍）。
+ *   - 文字類貼圖（銘牌、房號、門洞標示）保持高解析度與線性取樣——解謎資訊必須清楚可讀。
+ * 色票：髒白 #C3C6BE、灰藍 #56636A、暗綠 #36443C、炭黑 #191D1F、朱紅 #B5483A（只用於警示）、舊黃銅 #8E7C50（只用於機械部件）
  */
 export const C = {
-  bone: '#E8E5DC',
-  bone2: '#DCD8CD',
-  fog: '#A8AAA5',
-  ink: '#242729',
-  red: '#C64B3C',
-  brass: '#C5A568',
+  bone: '#C3C6BE',
+  bone2: '#A9ADA6',
+  fog: '#56636A',
+  green: '#36443C',
+  ink: '#191D1F',
+  red: '#B5483A',
+  brass: '#8E7C50',
 } as const;
 
 const SANS = '"Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif';
@@ -18,20 +23,44 @@ const MONO = '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace';
 
 const cache = new Map<string, CanvasTexture>();
 
-function make(key: string, w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, repeat = false): CanvasTexture {
+function make(key: string, w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, repeat = false, pixel = false): CanvasTexture {
   const hit = cache.get(key);
   if (hit) return hit;
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
   const g = c.getContext('2d')!;
+  g.imageSmoothingEnabled = !pixel;
   draw(g);
   const t = new CanvasTexture(c);
   t.colorSpace = SRGBColorSpace;
-  t.anisotropy = 4;
+  if (pixel) {
+    t.magFilter = NearestFilter;
+    t.minFilter = LinearMipmapLinearFilter;
+    t.anisotropy = 1;
+  } else {
+    t.anisotropy = 4;
+  }
   if (repeat) t.wrapS = t.wrapT = RepeatWrapping;
   cache.set(key, t);
   return t;
+}
+
+/** 低解析度的髒污：整數像素的斑點與垂直流痕 */
+function grime(g: CanvasRenderingContext2D, w: number, h: number, seed: number, amount: number, streaks = 0): void {
+  const r = rng(seed);
+  for (let i = 0; i < w * h * amount; i++) {
+    const a = 0.04 + r() * 0.1;
+    g.fillStyle = r() > 0.35 ? `rgba(10,14,14,${a})` : `rgba(220,226,222,${a * 0.6})`;
+    g.fillRect(Math.floor(r() * w), Math.floor(r() * h), 1, 1);
+  }
+  for (let i = 0; i < streaks; i++) {
+    const x = Math.floor(r() * w);
+    const y = Math.floor(r() * h * 0.6);
+    const len = 4 + Math.floor(r() * h * 0.3);
+    g.fillStyle = `rgba(20,24,22,${0.06 + r() * 0.08})`;
+    g.fillRect(x, y, 1, len);
+  }
 }
 
 /** 固定亂數（同一張貼圖每次產生都一樣） */
@@ -52,93 +81,95 @@ function grain(g: CanvasRenderingContext2D, w: number, h: number, n: number, alp
 }
 
 /**
- * 牆板模組：寬 1.2m、高 3.2m（整面牆高）。
- * 下段 0.9m 是霧灰粉體烤漆護牆，中間一道炭黑分隔條；上段是象牙白琺瑯板，板縫與固定螺絲清楚可見。
+ * 牆板模組：寬 1.2m、高 3.2m（整面牆高），48×128 像素（約 40 px／m）。
+ * 下段 0.9m 是灰藍粉體烤漆護牆，中間一道炭黑分隔條；上段是髒白琺瑯板，有板縫、螺絲與往下的流痕。
  */
 export function wallPanel(): CanvasTexture {
   return make(
     'wall',
-    192,
-    512,
+    48,
+    128,
     (g) => {
-      const H = 512;
-      const dado = H * (1 - 0.9 / 3.2);
-      g.fillStyle = C.bone;
-      g.fillRect(0, 0, 192, H);
-      // 上段琺瑯的輕微明暗（越往上越亮）
-      const grad = g.createLinearGradient(0, 0, 0, dado);
-      grad.addColorStop(0, 'rgba(255,255,255,0.18)');
-      grad.addColorStop(1, 'rgba(36,39,41,0.05)');
-      g.fillStyle = grad;
-      g.fillRect(0, 0, 192, dado);
-      // 下段護牆
-      g.fillStyle = C.fog;
-      g.fillRect(0, dado, 192, H - dado);
-      // 分隔條
-      g.fillStyle = C.ink;
-      g.fillRect(0, dado - 5, 192, 5);
-      // 板縫
-      g.fillStyle = 'rgba(36,39,41,0.55)';
-      g.fillRect(0, 0, 2, H);
-      g.fillRect(0, dado * 0.5, 192, 1.5);
-      // 螺絲
-      g.fillStyle = 'rgba(36,39,41,0.45)';
-      for (const y of [10, dado * 0.5 - 8, dado * 0.5 + 8, dado - 16]) {
-        g.fillRect(10, y, 3, 3);
-        g.fillRect(179, y, 3, 3);
+      const H = 128;
+      const dado = Math.round(H * (1 - 0.9 / 3.2));
+      g.fillStyle = '#9EA39D';
+      g.fillRect(0, 0, 48, H);
+      // 上段越往上越暗（天花板燈照不到）
+      for (let y = 0; y < dado; y++) {
+        g.fillStyle = `rgba(16,20,20,${0.22 * (1 - y / dado)})`;
+        g.fillRect(0, y, 48, 1);
       }
-      grain(g, 192, H, 900, 0.035, 7);
+      g.fillStyle = '#46535A';
+      g.fillRect(0, dado, 48, H - dado);
+      g.fillStyle = C.ink;
+      g.fillRect(0, dado - 2, 48, 2);
+      g.fillStyle = 'rgba(14,18,18,0.6)';
+      g.fillRect(0, 0, 1, H);
+      g.fillRect(0, Math.round(dado * 0.5), 48, 1);
+      g.fillStyle = 'rgba(14,18,18,0.5)';
+      for (const y of [3, Math.round(dado * 0.5) - 3, Math.round(dado * 0.5) + 2, dado - 6]) {
+        g.fillRect(3, y, 1, 1);
+        g.fillRect(44, y, 1, 1);
+      }
+      grime(g, 48, H, 7, 0.12, 6);
     },
+    true,
     true,
   );
 }
 
-/** 地板：1m 方格的霧灰水磨石，縫線炭黑 */
+/** 地板：1m 方格的混凝土磚（32×32），縫線炭黑、有水漬 */
 export function floorTile(): CanvasTexture {
   return make(
     'floor',
-    256,
-    256,
+    32,
+    32,
     (g) => {
-      g.fillStyle = '#A3A49E';
-      g.fillRect(0, 0, 256, 256);
-      grain(g, 256, 256, 2600, 0.08, 3);
-      g.strokeStyle = 'rgba(36,39,41,0.55)';
-      g.lineWidth = 2;
-      g.strokeRect(1, 1, 254, 254);
+      g.fillStyle = '#4E534F';
+      g.fillRect(0, 0, 32, 32);
+      grime(g, 32, 32, 3, 0.35);
+      g.fillStyle = 'rgba(10,12,12,0.6)';
+      g.fillRect(0, 0, 32, 1);
+      g.fillRect(0, 0, 1, 32);
+      const r = rng(21);
+      g.fillStyle = 'rgba(12,16,16,0.12)';
+      for (let i = 0; i < 3; i++) g.fillRect(4 + Math.floor(r() * 20), 4 + Math.floor(r() * 20), 4 + Math.floor(r() * 6), 3 + Math.floor(r() * 4));
     },
+    true,
     true,
   );
 }
 
-/** 天花板：骨白吸音板 */
+/** 天花板：深灰吸音板（16×16） */
 export function ceilingTile(): CanvasTexture {
   return make(
     'ceil',
-    128,
-    128,
+    16,
+    16,
     (g) => {
-      g.fillStyle = '#D9D6CC';
-      g.fillRect(0, 0, 128, 128);
-      grain(g, 128, 128, 500, 0.05, 11);
-      g.strokeStyle = 'rgba(36,39,41,0.35)';
-      g.lineWidth = 2;
-      g.strokeRect(1, 1, 126, 126);
+      g.fillStyle = '#353B3D';
+      g.fillRect(0, 0, 16, 16);
+      grime(g, 16, 16, 11, 0.4);
+      g.fillStyle = 'rgba(8,10,10,0.6)';
+      g.fillRect(0, 0, 16, 1);
+      g.fillRect(0, 0, 1, 16);
     },
+    true,
     true,
   );
 }
 
 /** 單色 CRT：炭黑玻璃、骨白磷光掃描線與幾行無意義的資料列（不含任何線索） */
 export function crtScreen(seed: number, on: boolean): CanvasTexture {
-  return make(`crt:${seed}:${on}`, 256, 192, (g) => {
-    g.fillStyle = '#1B1E1F';
+  return make(`crt:${seed}:${on}`, 128, 96, (g) => {
+    g.scale(0.5, 0.5);
+    g.fillStyle = '#121617';
     g.fillRect(0, 0, 256, 192);
     if (on) {
-      g.fillStyle = 'rgba(232,229,220,0.07)';
+      g.fillStyle = 'rgba(170,214,200,0.07)';
       for (let y = 0; y < 192; y += 3) g.fillRect(0, y, 256, 1);
       const r = rng(seed * 31 + 5);
-      g.fillStyle = 'rgba(232,229,220,0.82)';
+      g.fillStyle = 'rgba(176,222,206,0.8)';
       for (let i = 0; i < 8; i++) {
         let x = 18;
         const y = 20 + i * 19;
@@ -159,7 +190,7 @@ export function crtScreen(seed: number, on: boolean): CanvasTexture {
     v.addColorStop(1, 'rgba(0,0,0,0.55)');
     g.fillStyle = v;
     g.fillRect(0, 0, 256, 192);
-  });
+  }, false, true);
 }
 
 /** 設備銘牌：左邊編號、右邊名稱 */
@@ -202,7 +233,7 @@ export function zoneSign(letter: string, label: string): CanvasTexture {
     g.font = `700 64px ${SANS}`;
     g.fillText(label, 200, 140);
     g.font = `500 30px ${MONO}`;
-    g.fillStyle = 'rgba(36,39,41,0.7)';
+    g.fillStyle = 'rgba(8,10,10,0.75)';
     g.fillText(`SECTOR ${letter}`, 202, 196);
   });
 }
@@ -243,9 +274,9 @@ export function nameTexture(text: string): CanvasTexture {
 export function contactShadow(): Texture {
   return make('shadow', 128, 128, (g) => {
     const r = g.createRadialGradient(64, 64, 10, 64, 64, 64);
-    r.addColorStop(0, 'rgba(36,39,41,0.7)');
-    r.addColorStop(0.5, 'rgba(36,39,41,0.38)');
-    r.addColorStop(1, 'rgba(36,39,41,0)');
+    r.addColorStop(0, 'rgba(8,10,10,0.75)');
+    r.addColorStop(0.5, 'rgba(8,10,10,0.4)');
+    r.addColorStop(1, 'rgba(8,10,10,0)');
     g.fillStyle = r;
     g.fillRect(0, 0, 128, 128);
   });
@@ -255,8 +286,8 @@ export function contactShadow(): Texture {
 export function wallShadow(): Texture {
   return make('wallshadow', 8, 64, (g) => {
     const l = g.createLinearGradient(0, 0, 0, 64);
-    l.addColorStop(0, 'rgba(36,39,41,0.42)');
-    l.addColorStop(1, 'rgba(36,39,41,0)');
+    l.addColorStop(0, 'rgba(8,10,10,0.5)');
+    l.addColorStop(1, 'rgba(8,10,10,0)');
     g.fillStyle = l;
     g.fillRect(0, 0, 8, 64);
   });
@@ -264,8 +295,9 @@ export function wallShadow(): Texture {
 
 /** 紙本檔案（文件櫃上的紙張） */
 export function paperSheet(seed: number): CanvasTexture {
-  return make(`paper:${seed}`, 128, 160, (g) => {
-    g.fillStyle = '#F1EEE6';
+  return make(`paper:${seed}`, 32, 40, (g) => {
+    g.scale(0.25, 0.25);
+    g.fillStyle = '#C9C7BC';
     g.fillRect(0, 0, 128, 160);
     const r = rng(seed + 17);
     g.fillStyle = 'rgba(36,39,41,0.55)';
@@ -273,13 +305,14 @@ export function paperSheet(seed: number): CanvasTexture {
     for (let i = 0; i < 11; i++) g.fillRect(12, 34 + i * 10, 40 + r() * 64, 2);
     g.strokeStyle = 'rgba(36,39,41,0.35)';
     g.strokeRect(0.5, 0.5, 127, 159);
-  });
+  }, false, true);
 }
 
 /** 打孔卡 */
 export function punchCard(seed: number): CanvasTexture {
-  return make(`punch:${seed}`, 192, 88, (g) => {
-    g.fillStyle = '#E9DFC6';
+  return make(`punch:${seed}`, 48, 22, (g) => {
+    g.scale(0.25, 0.25);
+    g.fillStyle = '#BDB49C';
     g.fillRect(0, 0, 192, 88);
     g.fillStyle = 'rgba(36,39,41,0.85)';
     const r = rng(seed + 3);
@@ -294,7 +327,7 @@ export function punchCard(seed: number): CanvasTexture {
     g.lineTo(0, 14);
     g.fill();
     g.globalCompositeOperation = 'source-over';
-  });
+  }, false, true);
 }
 
 /** 房間標示：大號房間編號＋房間名稱（例如「R04 無窗迷宮」） */
@@ -311,7 +344,7 @@ export function roomSign(code: string, label: string): CanvasTexture {
     g.font = `700 62px ${SANS}`;
     g.fillText(label, x + 30, 140);
     g.font = `500 28px ${MONO}`;
-    g.fillStyle = 'rgba(36,39,41,0.7)';
+    g.fillStyle = 'rgba(8,10,10,0.75)';
     g.fillText('FACILITY 01', x + 32, 194);
   });
 }

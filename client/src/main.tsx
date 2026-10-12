@@ -1,8 +1,10 @@
-import { StrictMode } from 'react';
+import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import { initNetwork, socket } from './net/socket';
 import { useStore } from './state/store';
 import { pose } from './game/controller';
+import { blindDebug } from './game/loop';
+import { audio } from './audio/engine';
 import App from './ui/App';
 import Preview from './ui/Preview';
 import type { Role } from '@null-protocol/shared';
@@ -24,13 +26,32 @@ if (new URLSearchParams(location.search).has('debug')) {
     events.push([Date.now(), ev]);
     if (events.length > 300) events.shift();
   });
-  (window as unknown as { __NP__: unknown }).__NP__ = { useStore, pose, events };
+  (window as unknown as { __NP__: unknown }).__NP__ = { useStore, pose, events, blind: blindDebug, audio };
 }
+
+// 角色預覽頁另外載入（不進主程式的套件）
+const CrewPreview = lazy(() => import('./ui/CrewPreview'));
+// 盲區員測試關卡（走廊、岔路、房門、目標）：同樣另外載入
+const BlindLab = lazy(() => import('./ui/BlindLab'));
 
 const params = new URLSearchParams(location.search);
 const preview = params.get('preview');
 const previewRole = (params.get('role') ?? 'MUTE') as Role;
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>{preview ? <Preview mode={preview} role={previewRole} /> : <App />}</StrictMode>,
+  <StrictMode>
+    {preview === 'crew' ? (
+      <Suspense fallback={null}>
+        <CrewPreview />
+      </Suspense>
+    ) : preview === 'blind-lab' ? (
+      <Suspense fallback={null}>
+        <BlindLab />
+      </Suspense>
+    ) : preview ? (
+      <Preview mode={preview} role={previewRole} />
+    ) : (
+      <App />
+    )}
+  </StrictMode>,
 );

@@ -49,7 +49,20 @@ export interface PlayerPose {
   yaw: number;
 }
 
-export type PositionsMsg = Partial<Record<Role, PlayerPose>>;
+/** 隊友正在做的事（由伺服器依「開啟了哪一類設備」判定，不含設備名稱或內容） */
+export type PlayerActivity = 'interact' | 'inspect';
+
+/**
+ * 角色身體的外觀姿態（只影響隊友看到的動畫；不影響碰撞、權限或謎題）。
+ * crouch：蹲下（玩家按 C）；act：操作機關／觀察物件；hurt：被設備鎖定（觸電反應）的累計次數。
+ */
+export interface BodyState {
+  crouch?: boolean;
+  act?: PlayerActivity;
+  hurt?: number;
+}
+
+export type PositionsMsg = Partial<Record<Role, PlayerPose & BodyState>>;
 
 export interface SignalReceived {
   from: Role;

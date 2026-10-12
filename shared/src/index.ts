@@ -4,3 +4,5 @@ export * from './puzzle-types';
 export * from './level';
 export * from './types';
 export * from './events';
+export * from './acoustics';
+export * from './blindLab';

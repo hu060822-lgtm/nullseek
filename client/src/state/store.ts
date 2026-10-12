@@ -5,6 +5,7 @@ import type {
   Notice,
   PanelView,
   PuzzleId,
+  RiskStatus,
   Role,
   RoomPublic,
   SceneClues,
@@ -57,11 +58,33 @@ export interface Prefs {
   volume: number; // 0–1
   sensitivity: number; // 弧度／像素的倍率（0.5–2）
   speech: boolean; // 盲區員的語音播報
+  /** PS1 風格的低解析度算繪（半解析度、像素放大）；預設關閉，見 docs/CHARACTERS.md 第三階段的測試結果 */
+  retro: boolean;
+  /** 單聲道模式：沒有耳機／聽不出左右時使用（回聲另外以語音報出四個方向的距離） */
+  mono: boolean;
+  /** 各類聲音的音量（0–1.5，相對於總音量） */
+  envVolume: number;
+  echoVolume: number;
+  navVolume: number;
+  voiceVolume: number;
+  /** 盲區員：最近設備的指引音（關掉後只靠回聲、地標與隊友找設備） */
+  beacon: boolean;
 }
 
 const PREFS_KEY = 'null-protocol.prefs';
 function loadPrefs(): Prefs {
-  const def: Prefs = { volume: 0.8, sensitivity: 1, speech: true };
+  const def: Prefs = {
+    volume: 0.8,
+    sensitivity: 1,
+    speech: true,
+    retro: false,
+    mono: false,
+    envVolume: 1,
+    echoVolume: 1,
+    navVolume: 1,
+    voiceVolume: 1,
+    beacon: true,
+  };
   try {
     const raw = localStorage.getItem(PREFS_KEY);
     if (raw) return { ...def, ...(JSON.parse(raw) as Partial<Prefs>) };
@@ -109,6 +132,8 @@ export interface Store {
   /** 我可以聽見的、正在說話的隊友 */
   talking: Partial<Record<Role, boolean>>;
   voiceLinks: Partial<Record<string, 'connecting' | 'connected' | 'failed'>>;
+  /** 聲學感測器（回聲風險區）的狀態：盲區員聽預警、看得見的人看燈號 */
+  risks: RiskStatus[];
   prefs: Prefs;
   error: string | null;
 
@@ -151,6 +176,7 @@ export const useStore = create<Store>((set, get) => ({
   speaking: false,
   talking: {},
   voiceLinks: {},
+  risks: [],
   prefs: loadPrefs(),
   error: null,
 
@@ -189,6 +215,7 @@ export const useStore = create<Store>((set, get) => ({
     set({
       world: null,
       clues: {},
+      risks: [],
       markers: [],
       countdown: null,
       debugOpen: false,
@@ -207,6 +234,7 @@ export const useStore = create<Store>((set, get) => ({
       room: null,
       world: null,
       clues: {},
+      risks: [],
       markers: [],
       countdown: null,
       debug: false,

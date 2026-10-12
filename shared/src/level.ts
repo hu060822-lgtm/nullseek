@@ -28,7 +28,8 @@ export type ZoneId = 'R1' | 'R2' | 'R3' | 'R4' | 'R5' | 'R6' | 'R7' | 'R8' | 'R9
 export const WALL_HEIGHT = 3.2;
 export const EYE_HEIGHT = 1.6;
 export const PLAYER_RADIUS = 0.35;
-export const WALK_SPEED = 3.4;
+/** 步行速度（m/s）：配合角色動畫的步幅與恐怖遊戲的節奏，比原本的 3.4 慢 */
+export const WALK_SPEED = 2.3;
 /** 客戶端互動距離（公尺） */
 export const INTERACT_RANGE = 2.6;
 /** 伺服器接受的互動距離（含網路延遲容忍） */

@@ -96,4 +96,7 @@ export const BLIND_LAB: AcousticLevel = {
   ],
   muffle: { gain: 0.28, cutoff: 650 },
   materialOf: (b) => LAB_MATERIALS[b.id] ?? (b.kind === 'door' ? 'metal' : b.kind === 'prop' ? 'machine' : 'concrete'),
+  // 門楣（門打開後仍然存在）
+  vision: [{ kind: 'wall', minX: 7, maxX: 7 + T, minZ: 15, maxZ: 17.5, minY: 2.6, maxY: 3.2 }],
+  propHeight: (b) => (b.id === 'lab_cabinet' ? 1.8 : 1.1),
 };

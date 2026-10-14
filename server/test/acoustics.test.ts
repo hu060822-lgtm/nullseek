@@ -22,6 +22,9 @@ import {
   wallZ,
   zoneOfPoint,
   type Box,
+  DOOR_HEIGHT,
+  visionDurationMs,
+  visionSolids,
 } from '@null-protocol/shared';
 import { EchoRiskTracker } from '../src/game/echoRisk';
 
@@ -232,6 +235,54 @@ describe('B. 主動回聲：反映實際幾何', () => {
     const t0 = performance.now();
     for (let i = 0; i < 200; i++) castEcho(0, 30 + (i % 10), i, cols, CHAPTER1_ACOUSTICS.materialOf);
     expect((performance.now() - t0) / 200).toBeLessThan(2); // 每次遠低於一幀
+  });
+});
+
+describe('B2. 回聲視野（按 F 後短暫看到的結構模型）', () => {
+  const cols = buildColliders(closedDoors());
+  const r1 = { x: 0, z: 5 };
+
+  it('只有幾何：每個立體只有種類與六個邊界，沒有識別碼、設備名稱或任何其他欄位', () => {
+    const solids = visionSolids(cols, r1.x, r1.z, ECHO_CONFIG.range, CHAPTER1_ACOUSTICS, [[1, 5]]);
+    expect(solids.length).toBeGreaterThan(5);
+    for (const s of solids) expect(Object.keys(s).sort()).toEqual(['kind', 'maxX', 'maxY', 'maxZ', 'minX', 'minY', 'minZ']);
+    expect(JSON.stringify(solids)).not.toMatch(/r1_|prop_|d1|label/);
+  });
+
+  it('有距離上限：範圍外的牆、設備、隊友都不會出現（看不到完整地圖）', () => {
+    const range = ECHO_CONFIG.range;
+    const solids = visionSolids(cols, r1.x, r1.z, range, CHAPTER1_ACOUSTICS, [[0, 40]]);
+    for (const s of solids) {
+      const dx = Math.max(s.minX - r1.x, 0, r1.x - s.maxX);
+      const dz = Math.max(s.minZ - r1.z, 0, r1.z - s.maxZ);
+      expect(Math.hypot(dx, dz)).toBeLessThanOrEqual(range + 0.5);
+    }
+    expect(solids.some((s) => s.kind === 'body')).toBe(false);
+    // R3 以後的任何東西都不會出現在 R1 的視野裡
+    expect(solids.every((s) => s.minZ < wallZ(2) + 1)).toBe(true);
+  });
+
+  it('門：關著是門板；打開後門板消失，但門楣還在（看得出那裡有一個開口）', () => {
+    const near = { x: 0, z: wallZ(1) - 2 };
+    const closed = visionSolids(cols, near.x, near.z, 6, CHAPTER1_ACOUSTICS);
+    const door = (ss: typeof closed) => ss.filter((s) => s.kind === 'door' && s.minZ === wallZ(1));
+    expect(door(closed)).toHaveLength(1);
+    expect(door(closed)[0].maxY).toBe(DOOR_HEIGHT);
+    const open = visionSolids(buildColliders({ ...closedDoors(), d1: true }), near.x, near.z, 6, CHAPTER1_ACOUSTICS);
+    expect(door(open)).toHaveLength(0);
+    expect(open.some((s) => s.kind === 'wall' && s.minY === DOOR_HEIGHT && s.minZ === wallZ(1) && s.minX === -1)).toBe(true);
+  });
+
+  it('設備外形用設備的實際高度；R4 的門洞在牆上有輪廓', () => {
+    const r4 = visionSolids(cols, 0, wallZ(3) + 5, ECHO_CONFIG.range, CHAPTER1_ACOUSTICS);
+    expect(r4.filter((s) => s.kind === 'frame')).toHaveLength(4);
+    const props = visionSolids(cols, 0, 5, ECHO_CONFIG.range, CHAPTER1_ACOUSTICS).filter((s) => s.kind === 'prop');
+    expect(new Set(props.map((p) => p.maxY)).size).toBeGreaterThan(1);
+  });
+
+  it('時間：視野顯示的時間短於冷卻時間（每次之間一定有一段全黑）', () => {
+    expect(visionDurationMs()).toBeLessThan(ECHO_CONFIG.cooldownMs);
+    expect(visionDurationMs()).toBeGreaterThan(2500);
   });
 });
 

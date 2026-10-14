@@ -1,10 +1,13 @@
 import {
   DEVICE_BY_ID,
   DOOR_SLOTS,
+  PORTALS,
   ROOM_COUNT,
   ROOM_HALF_W,
+  WALL_HEIGHT,
   ZONES,
   forwardOf,
+  portalFront,
   roomRect,
   wallZ,
   type Box,
@@ -100,10 +103,12 @@ export interface EchoConfig {
   rays: number;
   /** 最大偵測距離（公尺） */
   range: number;
-  /** 冷卻時間（毫秒） */
+  /** 冷卻時間（毫秒）：從按下到可以再按 */
   cooldownMs: number;
-  /** 盲區員畫面上的短暫輪廓持續多久（毫秒） */
-  displayMs: number;
+  /** 回聲視野：擴散波的速度（m/s）、全部照亮後維持的時間、淡出的時間（毫秒） */
+  waveSpeed: number;
+  holdMs: number;
+  fadeMs: number;
   /** 發出脈衝到最近回聲的基本延遲（秒） */
   baseDelay: number;
   /** 每公尺增加的延遲（秒）。真實聲速下差異只有幾毫秒，這裡放大到人耳分辨得出的程度 */
@@ -120,9 +125,11 @@ export interface EchoConfig {
 
 export const ECHO_CONFIG: EchoConfig = {
   rays: 16,
-  range: 8,
-  cooldownMs: 1100,
-  displayMs: 1800,
+  range: 10,
+  cooldownMs: 5000,
+  waveSpeed: 18,
+  holdMs: 1800,
+  fadeMs: 1200,
   baseDelay: 0.06,
   delayPerMeter: 0.034,
   falloff: 0.42,
@@ -295,6 +302,63 @@ export function planEcho(hits: readonly EchoHit[], cfg: EchoConfig = ECHO_CONFIG
 }
 
 /* ------------------------------------------------------------------ */
+/* 回聲視野（盲區員按 F 後短暫看到的結構模型）                              */
+/* ------------------------------------------------------------------ */
+
+/** 回聲視野從開始到完全消失的時間（毫秒） */
+export const visionDurationMs = (cfg: Pick<EchoConfig, 'range' | 'waveSpeed' | 'holdMs' | 'fadeMs'> = ECHO_CONFIG): number =>
+  (cfg.range / cfg.waveSpeed) * 1000 + cfg.holdMs + cfg.fadeMs;
+
+/** 門板的高度（門上方的牆是門楣） */
+export const DOOR_HEIGHT = 2.6;
+
+/**
+ * 回聲視野裡的一個立體：只有種類與尺寸，**沒有識別碼、顏色、文字或任何謎題資料**。
+ * wall＝牆與門楣、door＝關著的門、prop＝設備外形、frame＝門洞的輪廓（只畫線、不遮擋）、body＝隊友。
+ */
+export interface VisionSolid {
+  kind: 'wall' | 'door' | 'prop' | 'frame' | 'body';
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+}
+
+const distToRect = (x: number, z: number, b: Rect): number =>
+  Math.hypot(Math.max(b.minX - x, 0, x - b.maxX), Math.max(b.minZ - z, 0, z - b.maxZ));
+
+/**
+ * 回聲視野要畫的結構：脈衝範圍內的碰撞盒（牆、關著的門、設備外形），加上關卡提供的額外結構（門楣、門洞輪廓）
+ * 與當下位置的隊友。只用公開的幾何資料，不含任何謎題線索；超出範圍的東西不會出現。
+ */
+export function visionSolids(
+  boxes: readonly Box[],
+  ox: number,
+  oz: number,
+  range: number,
+  level: Pick<AcousticLevel, 'vision' | 'propHeight'>,
+  bodies: ReadonlyArray<readonly [number, number]> = [],
+): VisionSolid[] {
+  const out: VisionSolid[] = [];
+  const reach = range + 0.5;
+  for (const b of boxes) {
+    if (distToRect(ox, oz, b) > reach) continue;
+    const r = { minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ };
+    if (b.kind === 'door') out.push({ kind: 'door', ...r, minY: 0, maxY: DOOR_HEIGHT });
+    else if (b.kind === 'prop') out.push({ kind: 'prop', ...r, minY: 0, maxY: level.propHeight?.(b) ?? 1.2 });
+    else out.push({ kind: 'wall', ...r, minY: 0, maxY: WALL_HEIGHT });
+  }
+  for (const s of level.vision ?? []) if (distToRect(ox, oz, s) <= reach) out.push({ ...s });
+  for (const [x, z] of bodies) {
+    if (Math.hypot(x - ox, z - oz) > reach) continue;
+    out.push({ kind: 'body', minX: x - 0.25, maxX: x + 0.25, minZ: z - 0.25, maxZ: z + 0.25, minY: 0, maxY: 1.75 });
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* 聲學關卡資料                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -373,6 +437,10 @@ export interface AcousticLevel {
   /** 從開口傳過來的悶聲：音量倍率與低通頻率 */
   muffle: { gain: number; cutoff: number };
   materialOf: (b: Box) => AcousticMaterial;
+  /** 回聲視野：碰撞盒以外的結構（門楣、門洞輪廓） */
+  vision?: VisionSolid[];
+  /** 回聲視野：設備外形的高度（預設 1.2 m） */
+  propHeight?: (b: Box) => number;
 }
 
 export function zoneOfPoint(level: AcousticLevel, x: number, z: number): string | null {
@@ -505,4 +573,30 @@ export const CHAPTER1_ACOUSTICS: AcousticLevel = {
   ],
   muffle: { gain: 0.28, cutoff: 650 },
   materialOf: chapterMaterial,
+  vision: chapterVision(),
+  propHeight: (b) => DEVICE_BY_ID[b.id.replace(/^prop_/, '')]?.size[1] ?? 1.2,
 };
+
+/** 第一章：每個門位上方的門楣（門開著時仍然存在），以及 R4／R9 門洞在牆上的輪廓 */
+function chapterVision(): VisionSolid[] {
+  const out: VisionSolid[] = [];
+  for (const s of DOOR_SLOTS) {
+    const z0 = wallZ(s.wall);
+    out.push({ kind: 'wall', minX: s.x - s.width / 2, maxX: s.x + s.width / 2, minZ: z0, maxZ: z0 + 0.4, minY: DOOR_HEIGHT, maxY: WALL_HEIGHT });
+  }
+  for (const p of PORTALS) {
+    const [cx, cz] = portalFront(p, 0.03);
+    const half = 0.8;
+    const alongZ = Math.abs(Math.sin(p.facing)) > 0.5;
+    out.push({
+      kind: 'frame',
+      minX: alongZ ? cx - 0.01 : cx - half,
+      maxX: alongZ ? cx + 0.01 : cx + half,
+      minZ: alongZ ? cz - half : cz - 0.01,
+      maxZ: alongZ ? cz + half : cz + 0.01,
+      minY: 0,
+      maxY: DOOR_HEIGHT,
+    });
+  }
+  return out;
+}

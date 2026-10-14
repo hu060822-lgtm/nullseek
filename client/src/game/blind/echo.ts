@@ -3,6 +3,7 @@ import {
   castEcho,
   planEcho,
   summarizeEcho,
+  visionSolids,
   type AcousticLevel,
   type Box,
   type EchoConfig,
@@ -20,7 +21,8 @@ import { emit, type EchoDisplay } from '../bus';
  * 輸出：
  *   - 聲音：每道射線的第一個反射點用 HRTF 定位播放，近的先到、清楚；遠的較晚、較弱、較悶；
  *     材質決定音色；沒有反射的方向只有遠處微弱的空氣聲；殘響長度由平均自由路徑決定。
- *   - 畫面：盲區員的黑畫面上短暫出現反射點（displayMs 後消失；與聲音的資訊完全相同）。
+ *   - 畫面（回聲視野）：從玩家位置擴散的波照出範圍內的結構——牆、門、設備外形、地面網格、當下的隊友位置——
+ *     全部反白，維持 holdMs 後淡出。只有幾何，沒有顏色、文字、燈號或任何謎題線索；牆會擋住牆後的東西。
  *   - 單聲道模式：另外用語音報出前／右／後／左最近的距離（立體聲時不報，保留探索與學習）。
  *
  * 限制：射線數、距離上限與冷卻時間來自設定；射線遇到第一個實體就停（不穿牆）；
@@ -45,6 +47,8 @@ export function monoSummary(s: EchoSummary, range = ECHO_CONFIG.range): string {
 export class EcholocationController {
   private readyAt = 0;
   private jammedUntil = 0;
+  /** 冷卻結束時播一聲「準備好了」 */
+  private announced = true;
   last: PulseResult | null = null;
 
   constructor(
@@ -64,7 +68,22 @@ export class EcholocationController {
     return now < this.jammedUntil;
   }
 
-  pulse(x: number, z: number, yaw: number, boxes: readonly Box[], now: number, opts: { mono: boolean; speak?: (t: string) => void }): PulseResult {
+  /** 每一幀呼叫：冷卻結束時提示一聲 */
+  update(now: number): void {
+    if (!this.announced && now >= this.readyAt && !this.jammed(now)) {
+      this.announced = true;
+      audio.echoReady();
+    }
+  }
+
+  pulse(
+    x: number,
+    z: number,
+    yaw: number,
+    boxes: readonly Box[],
+    now: number,
+    opts: { mono: boolean; speak?: (t: string) => void; bodies?: ReadonlyArray<readonly [number, number]> },
+  ): PulseResult {
     if (this.jammed(now)) {
       audio.echoJammed();
       return (this.last = { ok: false, reason: 'jammed' });
@@ -74,6 +93,7 @@ export class EcholocationController {
       return { ok: false, reason: 'cooldown' };
     }
     this.readyAt = now + this.cfg.cooldownMs;
+    this.announced = false;
     const hits = castEcho(x, z, yaw, boxes, this.level.materialOf, this.cfg);
     const plan = planEcho(hits, this.cfg);
     const summary = summarizeEcho(hits, this.cfg.range);
@@ -81,9 +101,14 @@ export class EcholocationController {
     for (const v of plan.voices) audio.echoVoice(v);
     audio.echoTail(plan.tail, plan.tailGain);
     const display: EchoDisplay = {
+      origin: [x, z],
+      solids: visionSolids(boxes, x, z, this.cfg.range, this.level, opts.bodies),
       hits: hits.map((h) => ({ rel: h.rel, dist: h.dist, hit: h.hit, material: h.material })),
       range: this.cfg.range,
-      displayMs: this.cfg.displayMs,
+      waveSpeed: this.cfg.waveSpeed,
+      holdMs: this.cfg.holdMs,
+      fadeMs: this.cfg.fadeMs,
+      cooldownMs: this.cfg.cooldownMs,
     };
     emit('echo', display);
     if (opts.mono) opts.speak?.(monoSummary(summary, this.cfg.range));
@@ -94,6 +119,7 @@ export class EcholocationController {
   reset(): void {
     this.readyAt = 0;
     this.jammedUntil = 0;
+    this.announced = true;
     this.last = null;
   }
 }

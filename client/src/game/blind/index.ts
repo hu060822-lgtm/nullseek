@@ -40,13 +40,14 @@ export class BlindAudioSystem {
   update(x: number, z: number, yaw: number, now: number): void {
     this.zone = zoneOfPoint(this.opts.level, x, z);
     this.orientation?.update(yaw);
+    this.echo?.update(now);
     this.spatial.update(this.zone, this.opts.isOpen, now);
   }
 
   /** 發出回聲（只有盲區員）；回傳 null＝這個角色沒有回聲能力 */
-  pulse(x: number, z: number, yaw: number, boxes: readonly Box[], now: number): PulseResult | null {
+  pulse(x: number, z: number, yaw: number, boxes: readonly Box[], now: number, bodies: ReadonlyArray<readonly [number, number]> = []): PulseResult | null {
     if (!this.echo) return null;
-    return this.echo.pulse(x, z, yaw, boxes, now, { mono: audio.isMono(), speak: this.opts.speak });
+    return this.echo.pulse(x, z, yaw, boxes, now, { mono: audio.isMono(), speak: this.opts.speak, bodies });
   }
 
   speakHeading(yaw: number): void {

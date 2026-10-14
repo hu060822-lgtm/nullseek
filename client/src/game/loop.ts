@@ -134,7 +134,9 @@ function echoPulse(): void {
   if (!r || ROLE_INFO[r].canSee) return; // 回聲定位是盲區員專用
   const st = useStore.getState();
   if (st.panel || !st.world) return;
-  const res = systemFor(r)?.pulse(pose.x, pose.z, pose.yaw, getColliders(), performance.now());
+  // 回聲也會照到隊友（脈衝當下的位置）
+  const bodies = (Object.values(remotes).filter(Boolean) as Array<{ x: number; z: number }>).map((p) => [p.x, p.z] as const);
+  const res = systemFor(r)?.pulse(pose.x, pose.z, pose.yaw, getColliders(), performance.now(), bodies);
   // 伺服器只用它判定風險區（用伺服器自己記錄的位置）；不會回傳任何資料
   if (res?.ok) sendEchoPulse();
 }

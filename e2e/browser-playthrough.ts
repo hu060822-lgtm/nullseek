@@ -54,6 +54,8 @@ const launch = () =>
 const browsers: Browser[] = [];
 const errors: string[] = [];
 const pages = {} as Record<Role, Page>;
+/** 每位玩家下載了幾個 3D 模型（盲區員應該是 0） */
+const modelRequests: Record<Role, number> = { BLIND: 0, DEAF: 0, MUTE: 0 };
 
 async function newPlayer(role: Role): Promise<Page> {
   const browser = await launch();
@@ -66,6 +68,9 @@ async function newPlayer(role: Role): Promise<Page> {
     if (m.type() === 'warning' && m.text().includes('[角色]')) errors.push(`[${role}] ${m.text()}`);
   });
   page.on('pageerror', (e) => errors.push(`[${role}] pageerror: ${e.message}`));
+  page.on('request', (r) => {
+    if (r.url().includes('/models/')) modelRequests[role]++;
+  });
   // tsx（esbuild）會把傳進 page.evaluate 的具名函式包上 __name()；頁面裡沒有這個輔助函式
   await page.addInitScript('window.__name = (f) => f;');
   await page.goto(`${BASE}/?debug`);
@@ -430,7 +435,7 @@ try {
   }
 
   console.log('▶ 感官限制與工具');
-  check((await A.locator('canvas').count()) === 0, '盲區員的頁面沒有任何 <canvas>（不載入 3D 場景）');
+  check((await A.locator('canvas').count()) === 0, '盲區員按 F 之前沒有任何 <canvas>（不載入 3D 場景；回聲視野第一次按 F 才載入）');
   check((await B.locator('canvas').count()) === 1 && (await C.locator('canvas').count()) === 1, '靜默員與失語員有 3D 場景');
   await A.waitForTimeout(4000);
   const links = async (p: Page) =>
@@ -461,8 +466,10 @@ try {
   await A.keyboard.press('KeyF');
   await A.waitForSelector('.echo-field[data-echo]', { timeout: 5000, state: 'attached' });
   const echoCount = Number(await A.getAttribute('.echo-field', 'data-echo'));
-  check(echoCount > 0 && echoCount <= 16, `盲區員按 F：畫面短暫出現 ${echoCount} 個反射點（最多 16 道射線）`);
-  await A.waitForSelector('.echo-field .contour', { state: 'attached' });
+  check(echoCount > 0, `盲區員按 F：回聲視野照出範圍內 ${echoCount} 個結構`);
+  await A.waitForSelector('.echo-field canvas', { state: 'attached', timeout: 20000 });
+  check((await A.locator('canvas').count()) === 1, '盲區員只有回聲視野的畫布（沒有完整的 3D 場景）');
+  check(!modelRequests.BLIND, '盲區員沒有下載任何角色模型或場景資產');
   await B.keyboard.press('KeyF');
   check((await B.locator('.echo-field').count()) === 0, '靜默員按 F 沒有任何作用');
 

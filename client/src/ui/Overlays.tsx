@@ -315,7 +315,7 @@ export function HelpOverlay(): JSX.Element | null {
       <div className="note">
         <kbd>WASD</kbd> 移動、<kbd>Shift</kbd> 跑、<kbd>C</kbd> 蹲下／站起、滑鼠轉向、<kbd>E</kbd> 操作設備、<kbd>Q</kbd> 信號器、<kbd>Tab</kbd> 線索、<kbd>H</kbd> 本頁
         {info.canSpeak && <>、<kbd>M</kbd> 麥克風靜音</>}
-        {!info.canSee && <>、<kbd>F</kbd> 回聲定位、<kbd>V</kbd> 報出朝向、<kbd>P</kbd> 重聽機械聲</>}
+        {!info.canSee && <>、<kbd>F</kbd> 回聲視野（冷卻 5 秒）、<kbd>V</kbd> 報出朝向、<kbd>P</kbd> 重聽機械聲</>}
         {info.canHear && <>、<kbd>K</kbd> 音訊校準</>}
         {role === 'MUTE' && <>、<kbd>G</kbd> 標記注視中的設備（隊友會看到標記、聽到方位）</>}。
         門洞（無窗迷宮、循環走廊）只要走進去就會觸發。

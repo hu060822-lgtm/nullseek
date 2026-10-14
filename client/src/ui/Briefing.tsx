@@ -96,7 +96,7 @@ export default function Briefing(): JSX.Element | null {
             {CONTROLS.filter(([k]) => info.canSpeak || k !== 'M').map(([k, v]) => (
               <Row key={k} k={k} v={v} />
             ))}
-            {!info.canSee && <Row k="F" v="回聲定位（盲區員專用）" />}
+            {!info.canSee && <Row k="F" v="回聲視野：短暫看到周圍的結構（盲區員專用，冷卻 5 秒）" />}
             {!info.canSee && <Row k="P" v="在面板中重聽機械聲" />}
           </dl>
           <div className="blk-heading">語音</div>

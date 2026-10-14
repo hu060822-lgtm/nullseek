@@ -447,6 +447,12 @@ class AudioEngine {
     for (const pan of [-0.7, 0.7]) this.noise(len, { freq: 1100, q: 0.5, gain, type: 'lowpass', at, pan, attack: 0.03, bus: 'echo' });
   }
 
+  /** 冷卻結束：很輕的上升兩音，告訴玩家可以再發 */
+  echoReady(): void {
+    this.tone(1200, 0.05, { type: 'sine', gain: 0.05, bus: 'echo' });
+    this.tone(1800, 0.06, { type: 'sine', gain: 0.045, at: 0.06, bus: 'echo' });
+  }
+
   /** 冷卻中再按：一聲很輕的「喀」，告訴玩家還不能發 */
   echoNotReady(): void {
     this.tone(260, 0.04, { type: 'triangle', gain: 0.05, bus: 'echo' });

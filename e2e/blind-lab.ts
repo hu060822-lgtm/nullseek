@@ -53,6 +53,25 @@ async function openLab(query = ''): Promise<Page> {
   return page;
 }
 
+/** 畫面中央區域（避開說明文字與充能條）亮像素的比例：用來確認回聲視野真的畫出來、之後真的消失 */
+async function brightRatio(p: Page): Promise<number> {
+  const png = await p.screenshot({ clip: { x: 300, y: 120, width: 560, height: 360 } });
+  return p.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const g = c.getContext('2d')!;
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 110) n++;
+    return n / (d.length / 4);
+  }, png.toString('base64'));
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const lab = <T>(p: Page, expr: string): Promise<T> => p.evaluate(`(async () => { const L = window.__LAB__; return ${expr}; })()`) as Promise<T>;
 
@@ -86,6 +105,37 @@ try {
     check(sideOk, `往右轉 0°→180°：聲源從右邊經過正前方移到左邊（右／左比 ${ratios.map((r) => r.toFixed(2)).join(' → ')}）`);
     const mono = await probe(Math.PI, true);
     check(Math.abs(mono.left - mono.right) / Math.max(mono.left, mono.right) < 0.01, '單聲道模式：左右聲道相同');
+    await p.close();
+  }
+
+  console.log('▶ 回聲視野（按 F 後短暫出現的結構模型）');
+  {
+    const p = await openLab();
+    check((await p.locator('canvas').count()) === 0, '按 F 之前：頁面沒有任何 3D 畫布');
+    const base = await brightRatio(p); // 說明文字的一部分會落在量測區域裡，以按下前的畫面為基準
+    check(base < 0.01, `按 F 之前：畫面全黑（基準亮像素 ${(base * 100).toFixed(2)}%）`);
+    const t0 = Date.now();
+    await lab(p, 'L.pulse()');
+    await p.waitForSelector('.echo-vision canvas, canvas.echo-vision, .echo-field canvas', { state: 'attached', timeout: 20000 });
+    const solids = Number(await p.getAttribute('.echo-field', 'data-echo'));
+    check(solids > 5, `回聲視野載入：範圍內有 ${solids} 個結構`);
+    await p.waitForTimeout(Math.max(0, 1300 - (Date.now() - t0)));
+    const lit = await brightRatio(p);
+    check(lit - base > 0.008, `視野可見期間：畫面出現反白的結構（亮像素 ${(lit * 100).toFixed(1)}%）`);
+    await p.screenshot({ path: 'e2e-shots/blind-vision.png' }).catch(() => undefined);
+    const dur = await lab<number>(p, 'L.sys.echo.cfg.range / L.sys.echo.cfg.waveSpeed * 1000 + L.sys.echo.cfg.holdMs + L.sys.echo.cfg.fadeMs');
+    await p.waitForTimeout(Math.max(0, dur + 600 - (Date.now() - t0)));
+    const after = await brightRatio(p);
+    check(Math.abs(after - base) < 0.002, `約 ${(dur / 1000).toFixed(1)} 秒後：視野完全消失（亮像素 ${(after * 100).toFixed(2)}%）`);
+    const again = await lab<{ ok: boolean; reason?: string }>(p, 'L.pulse()');
+    check(!again.ok && again.reason === 'cooldown', '視野消失後仍在冷卻：不能立刻再按（每次之間一定有一段全黑）');
+    // 往前走到走廊入口再發一次：視野跟著新的位置
+    await p.waitForFunction(() => (window as unknown as { __LAB__: { sys: { echo: { cooldownLeft(n: number): number } } } }).__LAB__.sys.echo.cooldownLeft(performance.now()) <= 0, undefined, { timeout: 8000 });
+    await lab(p, 'Object.assign(L.pose, { x: 0, z: 13.5 })');
+    await lab(p, 'L.pulse()');
+    await p.waitForTimeout(1300);
+    await p.screenshot({ path: 'e2e-shots/blind-vision-fork.png' }).catch(() => undefined);
+    check((await brightRatio(p)) - base > 0.008, '在岔路前再發一次：照出岔路的結構');
     await p.close();
   }
 
@@ -134,6 +184,9 @@ try {
     const r2 = await lab<{ ok: boolean; reason?: string }>(p, 'L.pulse()');
     check(!r2.ok && r2.reason === 'jammed', '干擾期間：回聲只有雜訊');
     await p.waitForFunction(() => !(window as unknown as { __LAB__: { sys: { echo: { jammed(n: number): boolean } } } }).__LAB__.sys.echo.jammed(performance.now()), undefined, {
+      timeout: 8000,
+    });
+    await p.waitForFunction(() => (window as unknown as { __LAB__: { sys: { echo: { cooldownLeft(n: number): number } } } }).__LAB__.sys.echo.cooldownLeft(performance.now()) <= 0, undefined, {
       timeout: 8000,
     });
     // 離開範圍（往左翼走 3 m）：一般區域可以自由使用回聲

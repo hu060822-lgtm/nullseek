@@ -236,17 +236,15 @@ input.code { text-transform: uppercase; letter-spacing: 0.32em; font-size: var(-
 
 /* 盲區員：沒有環境影像。只有局部輪廓（回聲）與振動提示 */
 .blind-view { position: absolute; inset: 0; background: var(--ink); display: flex; align-items: flex-end; justify-content: center; overflow: hidden; }
-.blind-view .whisper { color: #4a4e51; font-size: var(--t-xs); padding: 20px; text-align: center; user-select: none; }
+.blind-view .whisper { position: relative; z-index: 3; color: #4a4e51; font-size: var(--t-xs); padding: 20px; text-align: center; user-select: none; }
 .blind-view .whisper kbd { color: #5d6164; }
-.echo-field { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
-.echo-field svg { position: absolute; left: -160px; top: -160px; }
-.echo-field .contour { stroke: var(--bone); stroke-width: 2; stroke-linecap: square; fill: none; animation: contour 1.6s ease-out forwards; }
-/* 材質：混凝土＝實線、金屬門＝較亮的粗線、設備＝點線、木頭＝細線（與回聲的音色對應） */
-.echo-field .contour.m-metal { stroke-width: 3.2; stroke: #f4f1e6; }
-.echo-field .contour.m-machine { stroke-dasharray: 2 3; }
-.echo-field .contour.m-wood { stroke-width: 1.2; }
-@keyframes contour { 0% { opacity: 0; } 12% { opacity: 0.9; } 100% { opacity: 0; } }
-.listener { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border: 1px solid #5d6164; transform: rotate(45deg); }
+.echo-field { position: absolute; inset: 0; pointer-events: none; }
+.echo-field canvas { display: block; }
+/* 回聲的充能條：按下後歸零，冷卻結束時填滿（干擾時顯示干擾的剩餘時間） */
+.echo-charge { position: absolute; left: 50%; bottom: 56px; width: 120px; height: 2px; margin-left: -60px; background: #34383b; z-index: 3; pointer-events: none; }
+.echo-charge i { position: absolute; inset: 0; background: #8d9194; transform-origin: left center; animation: echo-charge linear forwards; }
+@keyframes echo-charge { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.listener { position: absolute; z-index: 2; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border: 1px solid #5d6164; transform: rotate(45deg); }
 .vibe { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 0 transparent; }
 .vibe.bump { animation: vibe-bump .28s ease-out; }
 .vibe.near { animation: vibe-near .5s ease-out; }

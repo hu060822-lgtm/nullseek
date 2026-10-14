@@ -226,7 +226,7 @@ export default function BlindLab(): JSX.Element {
         <h1>盲區員測試關卡</h1>
         <p>穿過走廊，在岔路找到通往目標房間的門並打開，再找到目標設備。岔路中央有聲學感測器：聽到滴答聲時發出回聲會被偵測。</p>
         <p className="lab-keys">
-          點一下畫面開始（請戴耳機）。<kbd>WASD</kbd> 移動、滑鼠轉向、<kbd>F</kbd> 回聲、<kbd>V</kbd> 報出朝向、<kbd>K</kbd> 音訊校準、<kbd>E</kbd> 開門／操作。加上 <code>&amp;mono=1</code> 測試單聲道。
+          點一下畫面開始（請戴耳機）。<kbd>WASD</kbd> 移動、滑鼠轉向、<kbd>F</kbd> 回聲視野、<kbd>V</kbd> 報出朝向、<kbd>K</kbd> 音訊校準、<kbd>E</kbd> 開門／操作。加上 <code>&amp;mono=1</code> 測試單聲道。
         </p>
         <p className="lab-status" data-door={view.door ? 1 : 0} data-done={view.done ? 1 : 0}>
           {view.done ? '完成：找到目標設備。' : view.door ? '門已打開。' : '門尚未打開。'}
